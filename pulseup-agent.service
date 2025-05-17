@@ -1,0 +1,16 @@
+[Unit]
+Description=PulseUp Agent Service
+After=network.target
+
+[Service]
+Type=simple
+User=pulseup
+Group=pulseup
+Restart=always
+RestartSec=5
+Environment=PYTHONUNBUFFERED=1
+WorkingDirectory=/opt/pulseup-agent
+ExecStart=/opt/pulseup-agent/pulseup-agent
+
+[Install]
+WantedBy=multi-user.target 
