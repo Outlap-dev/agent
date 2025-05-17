@@ -15,6 +15,7 @@ from src.services.caddy_service import CaddyService
 from src.services.deployment_service import DeploymentService
 from src.services.environment_service import EnvironmentService
 from src.services.container_monitor_service import ContainerMonitorService
+from src.services.version_check_service import VersionCheckService
 from src.websocket.socket_manager import SocketManager
 from src.utils.command_registry import CommandRegistry
 from src.handlers.base_handler import CommandHandler
@@ -56,7 +57,7 @@ class ServiceManager:
         self._environment_service = None
         self._container_monitor_service = None
         self._database_service = None
-
+        self._version_check_service = None
 
         # Auto-discovered and registered handlers
         self._auto_registered_handlers = []
@@ -79,6 +80,7 @@ class ServiceManager:
         self._environment_service = EnvironmentService()
         self._container_monitor_service = ContainerMonitorService()
         self._database_service = DatabaseService()
+        self._version_check_service = VersionCheckService()
 
         # Initialize services with dependencies
         self._build_service = BuildService(
@@ -128,6 +130,7 @@ class ServiceManager:
         self._environment_service.socket_manager = self._socket_manager
         self._container_monitor_service.set_socket_manager(self._socket_manager)
         self._container_monitor_service.set_docker_service(self._docker_service)
+        self._version_check_service.set_socket_manager(self._socket_manager)
         
         # Set status service on nixpacks service
         self._nixpacks_service.set_status_service(self._status_service)
@@ -330,6 +333,11 @@ class ServiceManager:
         """Get the database service."""
         return self._database_service
     
+    @property
+    def version_check_service(self) -> VersionCheckService:
+        """Get the version check service."""
+        return self._version_check_service
+    
     async def connect(self):
         """
         Connect to the WebSocket server.
@@ -348,6 +356,13 @@ class ServiceManager:
                 await self._container_monitor_service.start()
             except Exception as e:
                 logger.error(f"Error starting container monitor service: {e}")
+
+        # Start version check service
+        if self._version_check_service:
+            try:
+                await self._version_check_service.start()
+            except Exception as e:
+                logger.error(f"Error starting version check service: {e}")
         
         if self._socket_manager:
             await self._socket_manager.connect()
@@ -364,6 +379,13 @@ class ServiceManager:
                 await self._container_monitor_service.stop()
             except Exception as e:
                 logger.error(f"Error stopping container monitor service: {e}")
+
+        # Stop version check service
+        if self._version_check_service:
+            try:
+                await self._version_check_service.stop()
+            except Exception as e:
+                logger.error(f"Error stopping version check service: {e}")
         
         if self._socket_manager:
             await self._socket_manager.disconnect()

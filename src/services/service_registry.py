@@ -4,6 +4,7 @@ from src.services.github_clone_service import GithubCloneService
 from src.services.build_service import BuildService
 from src.services.setup_service import SetupService
 from src.services.status_service import StatusService
+from src.services.version_check_service import VersionCheckService
 from src.utils.command_registry import CommandRegistry
 from src.installations.installation_manager import InstallationManager
 from src.services.docker_service import DockerService
@@ -89,6 +90,11 @@ class ServiceRegistry:
     def dockerfile_service(self) -> Optional[DockerfileService]:
         """Get the Dockerfile service instance."""
         return self.get(DockerfileService)
+    
+    @property
+    def version_check_service(self) -> Optional[VersionCheckService]:
+        """Get the version check service instance."""
+        return self.get(VersionCheckService)
     
     def clear(self) -> None:
         """Clear all registered services."""

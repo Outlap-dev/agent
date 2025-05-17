@@ -80,6 +80,11 @@ class PulseUpAgent:
             service_manager.system_metrics_service.set_socket_manager(
                 service_manager.socket_manager
             )
+
+            # Set up version check service
+            service_manager.version_check_service.set_socket_manager(
+                service_manager.socket_manager
+            )
             
             return True
             
@@ -110,6 +115,8 @@ class PulseUpAgent:
             connect_task = asyncio.create_task(service_manager.connect())
             # -- Metrics coming soon
             # metrics_task = asyncio.create_task(service_manager.system_metrics_service.start())
+            # Start version check service
+            version_check_task = asyncio.create_task(service_manager.version_check_service.start())
             
             # Wait for the connection task to complete
             await connect_task
