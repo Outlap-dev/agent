@@ -1,9 +1,11 @@
 import asyncio
 import logging
 import os
-from typing import Optional
-from src.websocket.socket_manager import SocketManager
+from typing import Optional, TYPE_CHECKING
 from src.config.agent_version import AGENT_VERSION
+
+if TYPE_CHECKING:
+    from src.websocket.socket_manager import SocketManager
 
 logger = logging.getLogger(__name__)
 
@@ -14,12 +16,12 @@ class VersionCheckService:
     """Service for periodically checking for new versions."""
 
     def __init__(self):
-        self.socket_manager = None
+        self.socket_manager: Optional['SocketManager'] = None
         self._check_task_handle: Optional[asyncio.Task] = None
         self._stop_event = asyncio.Event()
         self._running = False
 
-    def set_socket_manager(self, socket_manager: SocketManager):
+    def set_socket_manager(self, socket_manager: 'SocketManager'):
         """Sets the SocketManager instance used for checking versions."""
         self.socket_manager = socket_manager
 
