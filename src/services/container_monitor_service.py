@@ -153,7 +153,6 @@ class ContainerMonitorService:
             
         self._running = True
         self._monitor_task = asyncio.create_task(self._monitor_loop())
-        logger.info("Container monitor started")
     
     async def stop(self):
         """Stop the container monitor"""
@@ -168,4 +167,3 @@ class ContainerMonitorService:
             except asyncio.CancelledError:
                 pass
             self._monitor_task = None
-        logger.info("Container monitor stopped") 

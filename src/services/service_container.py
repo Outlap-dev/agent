@@ -109,9 +109,7 @@ class ServiceContainer(Singleton):
             if build_service_in_registry:
                 if service_manager.socket_manager:
                     build_service_in_registry.set_socket_manager(service_manager.socket_manager)
-                    logger.info("Successfully set SocketManager on the BuildService instance in the global registry.")
                 else:
-                    logger.error("ServiceManager's SocketManager is None. Cannot configure BuildService in registry.")
                     return False
             else:
                 logger.error("BuildService not found in registry. Cannot set SocketManager.")
@@ -120,10 +118,6 @@ class ServiceContainer(Singleton):
             # Register the StatusService from the ServiceManager in the registry
             if service_manager.status_service:
                 self._registry.register(StatusService, service_manager.status_service)
-                logger.info("Successfully registered StatusService from ServiceManager in the global registry.")
-            else:
-                logger.error("ServiceManager's StatusService is None. Cannot register in global registry.")
-                return False
             
             return True
             

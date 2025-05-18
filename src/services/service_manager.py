@@ -164,7 +164,10 @@ class ServiceManager:
         from src.handlers.db_restart_handler import DBRestartHandler
         from src.handlers.get_hardware_info_handler import GetHardwareInfoHandler
         from src.handlers.get_live_stats_handler import GetLiveStatsHandler
+
         from src.handlers.get_service_logs_handler import GetServiceLogsHandler
+        from src.handlers.get_deployment_logs_handler import GetDeploymentLogsHandler
+
         from src.handlers.mysql_backup_handler import MySQLBackupHandler
         from src.handlers.database_deployment_handler import DatabaseDeploymentHandler
         from src.handlers.service_deletion_handler import ServiceDeletionHandler
@@ -186,6 +189,7 @@ class ServiceManager:
             GetHardwareInfoHandler,
             GetLiveStatsHandler,
             GetServiceLogsHandler,
+            GetDeploymentLogsHandler,
             MySQLBackupHandler,
             DatabaseDeploymentHandler,
             ServiceDeletionHandler,

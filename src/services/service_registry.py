@@ -38,8 +38,6 @@ class ServiceRegistry:
     def register(self, service_class: Type[T], instance: T) -> None:
         """Register a service instance."""
         service_name = service_class.__name__
-        if service_name in self._services:
-            logger.warning(f"Service {service_name} already registered, overwriting")
         self._services[service_name] = instance
     
     def get(self, service_class: Type[T]) -> Optional[T]:
