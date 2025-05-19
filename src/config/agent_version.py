@@ -1,7 +1,7 @@
 """Configuration for agent versioning."""
 
 # Current version of the agent
-AGENT_VERSION = "0.1.3"
+AGENT_VERSION = "0.1.4"
 
 def parse_version(version_str: str) -> tuple:
     """Parse a version string into a tuple of integers."""
