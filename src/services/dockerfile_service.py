@@ -106,7 +106,8 @@ class DockerfileService:
 
             build_result = await self.docker_service.build_image(
                 context_path=source_path,
-                service_uid=service_uid
+                service_uid=service_uid,
+                deployment_uid=deployment_uid
             )
             
             if not build_result.get('success'):

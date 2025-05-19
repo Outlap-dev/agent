@@ -2,6 +2,7 @@ import logging
 import os
 import asyncio
 from typing import Optional
+import datetime
 
 logger = logging.getLogger(__name__)
 
@@ -47,8 +48,8 @@ class DockerService:
              logger.error(f"Unexpected error getting container '{container_name}': {e}", exc_info=True)
              return None
 
-    async def build_image(self, context_path: str, service_uid: str):
-        """Builds a container image using a Dockerfile."""
+    async def build_image(self, context_path: str, service_uid: str, deployment_uid: str = None):
+        """Builds a container image using a Dockerfile and logs output if deployment_uid is provided."""
         if not self.client:
              logger.error("Docker client not available for build.")
              return {"success": False, "error": "Docker client not available"}
@@ -61,20 +62,41 @@ class DockerService:
              return {"success": False, "error": "Dockerfile not found"}
         
         image_name = f"pulseup-app:{service_uid}"
+        logs_dir = "/var/log/pulseup/deployments"
+        if deployment_uid:
+            os.makedirs(logs_dir, exist_ok=True)
+            log_file_path = os.path.join(logs_dir, f"{deployment_uid}_build.log")
+        else:
+            log_file_path = None
         
         try:
-            # Run the build in a separate thread to avoid blocking
-            image, build_log = await asyncio.to_thread(
-                self.client.images.build,
-                path=context_path,
-                tag=image_name,
-                rm=True,  # Remove intermediate containers
-                forcerm=True  # Force remove intermediate containers even if build fails
-            )
+            def build_with_logs():
+                # This runs in a thread, so no async file IO
+                image, build_log = self.client.images.build(
+                    path=context_path,
+                    tag=image_name,
+                    rm=True,
+                    forcerm=True
+                )
+                return image, list(build_log)
+            
+            image, build_log = await asyncio.to_thread(build_with_logs)
+            
+            # Write logs to file if needed
+            if log_file_path:
+                try:
+                    with open(log_file_path, 'a') as f:
+                        f.write(f"{datetime.datetime.now().isoformat()} - INFO - Log file initialized for Docker build.\n")
+                        for entry in build_log:
+                            line = entry.get('stream') or entry.get('status') or str(entry)
+                            if line:
+                                timestamp = datetime.datetime.now().isoformat()
+                                f.write(f"{timestamp} - INFO - {line.strip()}\n")
+                except Exception as e:
+                    logger.error(f"Failed to write Docker build log to {log_file_path}: {e}")
             
             logger.info(f"Docker build completed successfully for {image_name}")
             
-            # Return success with image info
             return {
                 "success": True, 
                 "image_name": image_name,
@@ -82,19 +104,17 @@ class DockerService:
                 "message": "Build via Dockerfile completed successfully"
             }
             
-        except docker.errors.BuildError as e:
-            error_msg = f"Docker build failed for {image_name}: {e}"
-            logger.error(error_msg)
-            return {"success": False, "error": error_msg}
-            
-        except docker.errors.APIError as e:
-            error_msg = f"Docker API error during build for {image_name}: {e}"
-            logger.error(error_msg)
-            return {"success": False, "error": error_msg}
-            
         except Exception as e:
             error_msg = f"Unexpected error during Docker build for {image_name}: {e}"
             logger.error(error_msg)
+            # Log error to file if needed
+            if log_file_path:
+                try:
+                    with open(log_file_path, 'a') as f:
+                        timestamp = datetime.datetime.now().isoformat()
+                        f.write(f"{timestamp} - ERROR - {error_msg}\n")
+                except Exception as e2:
+                    logger.error(f"Failed to write error to Docker build log {log_file_path}: {e2}")
             return {"success": False, "error": error_msg}
 
     async def container_exists(self, container_name: str) -> bool:
