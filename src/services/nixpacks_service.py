@@ -46,18 +46,6 @@ class NixpacksService:
         else:
             logger.warning(f"SocketManager not set in NixpacksService. Cannot send status update for {service_uid}: {status}")
 
-    async def initialize(self):
-        """Checks for Nixpacks and attempts installation if missing."""
-        if not self._is_nixpacks_installed():
-            logger.warning("Nixpacks command not found. Attempting installation...")
-            try:
-                await self._install_nixpacks()
-                if not self._is_nixpacks_installed():
-                    raise EnvironmentError("Nixpacks installation attempt finished, but command is still not found.")
-            except Exception as e:
-                logger.error(f"Failed during Nixpacks installation attempt: {e}")
-                raise EnvironmentError("Nixpacks command not found and installation failed. Please install Nixpacks manually or check prerequisites.")
-
     def _is_nixpacks_installed(self) -> bool:
         return shutil.which("nixpacks") is not None
 
@@ -169,24 +157,6 @@ class NixpacksService:
                 async with aiofiles.open(log_file, mode='a') as f: await f.write(f"{timestamp} - ERROR - {detailed_error_log}\\n")
 
         return {'stdout': stdout_str, 'stderr': stderr_str, 'return_code': return_code}
-
-    async def _install_nixpacks(self):
-        """Installs Nixpacks using the official script. Requires curl."""
-        if not shutil.which("curl"):
-             raise EnvironmentError("curl is required to install Nixpacks automatically. Please install curl.")
-
-        install_script_url = "https://nixpacks.com/install.sh"
-        command = f"curl -sSL {install_script_url} | bash"
-
-        try:
-            result = await self._run_shell_command(command)
-            if result['return_code'] != 0:
-                error_message = f"Nixpacks installation script failed. Code: {result['return_code']}. Stderr: {result['stderr']}"
-                logger.error(error_message)
-                raise RuntimeError(error_message)
-        except Exception as e:
-            logger.error(f"Error during Nixpacks installation script execution: {e}")
-            raise
 
     async def build_image(self, source_path: str, service_uid: str, deployment_uid: str = None):
         """Builds a container image using Nixpacks."""

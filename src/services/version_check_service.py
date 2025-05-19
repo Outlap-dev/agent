@@ -1,8 +1,9 @@
 import asyncio
 import logging
 import os
+import aiohttp
 from typing import Optional, TYPE_CHECKING
-from src.config.agent_version import AGENT_VERSION
+from src.config.agent_version import AGENT_VERSION, is_newer_version
 
 if TYPE_CHECKING:
     from src.websocket.socket_manager import SocketManager
@@ -11,6 +12,13 @@ logger = logging.getLogger(__name__)
 
 # Check interval (seconds)
 CHECK_INTERVAL_SEC = 300  # 5 minutes
+
+# GitHub repository details
+GITHUB_REPO = "PulseUp-IO/pulseup-agent"
+GITHUB_API_URL = f"https://api.github.com/repos/{GITHUB_REPO}/tags"
+
+# Update flag file path
+UPDATE_FLAG_FILE = "/var/run/pulseup-agent/update-needed"
 
 class VersionCheckService:
     """Service for periodically checking for new versions."""
@@ -29,10 +37,6 @@ class VersionCheckService:
         """Starts the background version check task."""
         if self._running:
             logger.debug("Version check service already running")
-            return
-
-        if not self.socket_manager:
-            logger.error("SocketManager not set. Cannot start VersionCheckService.")
             return
 
         self._stop_event.clear()
@@ -59,79 +63,66 @@ class VersionCheckService:
             self._check_task_handle = None
         logger.info("Version check service stopped")
 
-    async def _perform_update(self, install_url: str, install_token: str) -> bool:
-        """Perform the agent update using the install script."""
+    async def _get_latest_version(self) -> Optional[str]:
+        """Get the latest version from GitHub tags."""
         try:
-            # Construct the update command
-            update_cmd = f'curl -sSL {install_url} | bash -s -- --token {install_token}'
+            async with aiohttp.ClientSession() as session:
+                async with session.get(GITHUB_API_URL) as response:
+                    if response.status != 200:
+                        logger.error(f"Failed to fetch GitHub tags: {response.status}")
+                        return None
+                    
+                    tags = await response.json()
+                    if not tags:
+                        logger.warning("No tags found in GitHub repository")
+                        return None
+                    
+                    # Get the latest tag (first in the list)
+                    latest_tag = tags[0]['name']
+                    # Remove 'v' prefix if present
+                    return latest_tag.lstrip('v')
+                    
+        except Exception as e:
+            logger.error(f"Error fetching latest version: {e}", exc_info=True)
+            return None
+
+    async def _request_update(self) -> bool:
+        """Request an update by creating the update flag file."""
+        try:
+            # Ensure the directory exists
+            os.makedirs(os.path.dirname(UPDATE_FLAG_FILE), exist_ok=True)
             
-            # Execute the update command
-            process = await asyncio.create_subprocess_shell(
-                update_cmd,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE
-            )
-            stdout, stderr = await process.communicate()
+            # Create the update flag file
+            with open(UPDATE_FLAG_FILE, 'w') as f:
+                f.write('')  # Empty file is sufficient as a flag
             
-            if process.returncode != 0:
-                logger.error(f"Update failed with return code {process.returncode}")
-                logger.error(f"Update error output: {stderr.decode()}")
-                return False
-            
-            logger.info("Update completed successfully")
+            logger.info("Update requested via flag file")
             return True
             
         except Exception as e:
-            logger.error(f"Error during update: {e}", exc_info=True)
+            logger.error(f"Error requesting update: {e}", exc_info=True)
             return False
 
     async def _check_task(self):
         """Background task to periodically check for new versions."""
         while not self._stop_event.is_set():
             try:
-                if not self.socket_manager:
-                    logger.warning("Cannot check version: SocketManager not connected")
+                # Get latest version from GitHub
+                latest_version = await self._get_latest_version()
+                if not latest_version:
                     await asyncio.wait_for(self._stop_event.wait(), timeout=CHECK_INTERVAL_SEC)
                     continue
 
-                # Call the check_version endpoint with current version
-                result = await self.socket_manager.sio.call(
-                    'check_version',
-                    {'version': AGENT_VERSION},
-                    namespace=self.socket_manager.namespace,
-                    timeout=30
-                )
-
-                # Process the response
-                if not result or not isinstance(result, dict):
-                    continue
-
-                # If the version check fails, continue
-                if not result.get('success'):
-                    logger.warning(f"Version check failed: {result.get('error')}")
-                    continue
-
-                # If no update is available, continue
-                if not result.get('update_available'):
-                    continue
-
-                # If an update is available, perform the update
-                latest_version = result.get('latest_version')
-                logger.info(f"New version available: {latest_version}")
-                
-                # Get install URL from environment
-                install_url = os.getenv('INSTALL_URL')
-                install_token = os.getenv('AGENT_TOKEN')
-                
-                if not install_url or not install_token:
-                    logger.error("INSTALL_URL or AGENT_TOKEN not configured")
-                    continue
-
-                logger.info("Starting agent update...")
-                if await self._perform_update(install_url, install_token):
-                    # Stop the service after successful update
-                    await self.stop()
-                    return
+                # Compare versions
+                if is_newer_version(AGENT_VERSION, latest_version):
+                    logger.info(f"New version available: {latest_version}")
+                    
+                    # Request update via flag file
+                    logger.info("Requesting agent update...")
+                    if await self._request_update():
+                        # Stop the service after requesting update
+                        await self.stop()
+                        return
 
                 # Wait for the next interval or stop event
                 await asyncio.wait_for(self._stop_event.wait(), timeout=CHECK_INTERVAL_SEC)

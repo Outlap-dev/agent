@@ -143,7 +143,6 @@ class BuildService:
                 }
             else:
                 # Ensure Nixpacks is ready before getting plan
-                await self.nixpacks_service.initialize() 
                 suggested_plan = await self.nixpacks_service.get_suggested_config(clone_path)
                 
                 if suggested_plan:
