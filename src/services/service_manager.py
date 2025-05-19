@@ -158,7 +158,6 @@ class ServiceManager:
         from src.handlers.stream_container_logs_handler import StreamContainerLogsHandler
         from src.handlers.stop_stream_container_logs_handler import StopStreamContainerLogsHandler
         from src.handlers.get_build_info_handler import GetBuildInfoHandler
-        from src.handlers.tools_install_handler import ToolsInstallHandler
         from src.handlers.add_ssh_key_handler import AddSSHKeyHandler
         from src.handlers.restart_server_handler import RestartServerHandler
         from src.handlers.db_restart_handler import DBRestartHandler
@@ -182,7 +181,6 @@ class ServiceManager:
             StreamContainerLogsHandler, 
             StopStreamContainerLogsHandler,
             GetBuildInfoHandler,
-            ToolsInstallHandler,
             AddSSHKeyHandler,
             RestartServerHandler,
             DBRestartHandler,

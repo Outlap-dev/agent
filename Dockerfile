@@ -13,6 +13,7 @@ RUN apt-get update && apt-get install -y \
     gnupg \
     lsb-release \
     dmidecode \
+    git \
     # Install Docker Engine requirements
     && mkdir -p /etc/apt/keyrings \
     && curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg \
@@ -27,6 +28,9 @@ WORKDIR /app
 # Copy requirements first to leverage Docker cache
 COPY requirements.txt .
 RUN pip3 install -r requirements.txt
+
+# Install Nixpacks
+RUN curl -sSL https://nixpacks.com/install.sh | bash
 
 # Copy the entrypoint script
 COPY dind-entrypoint.sh /usr/local/bin/dind-entrypoint.sh

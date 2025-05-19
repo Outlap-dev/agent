@@ -89,7 +89,7 @@ class VersionCheckService:
         """Background task to periodically check for new versions."""
         while not self._stop_event.is_set():
             try:
-                if not self.socket_manager or not self.socket_manager.is_connected():
+                if not self.socket_manager:
                     logger.warning("Cannot check version: SocketManager not connected")
                     await asyncio.wait_for(self._stop_event.wait(), timeout=CHECK_INTERVAL_SEC)
                     continue

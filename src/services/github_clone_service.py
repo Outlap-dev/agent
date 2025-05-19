@@ -2,8 +2,7 @@ import os
 import shutil
 import asyncio
 from urllib.parse import urlparse
-import platform
-from src.utils.logging_utils import get_logger, log_exception, log_function_entry, log_function_exit
+from src.utils.logging_utils import get_logger, log_function_entry, log_function_exit
 
 logger = get_logger(__name__)
 
@@ -18,26 +17,6 @@ class GithubCloneService:
         """Set the build service for this clone service."""
         self._build_service = build_service
         logger.debug("Build service set for GitHub clone service")
-
-    async def initialize(self):
-        """Checks for git and attempts installation if missing."""
-        log_function_entry(logger, "initialize")
-        if not self._is_git_installed():
-            logger.warning("Git command not found. Attempting installation...")
-            try:
-                # Await the installation coroutine directly
-                await self._install_git()
-            except Exception as e:
-                log_exception(logger, "Failed during git installation attempt", e)
-                raise EnvironmentError("Git command not found and installation attempt failed. Please install git manually.")
-
-            if not self._is_git_installed():
-                 raise EnvironmentError("Git installation attempt finished, but git command is still not found. Please install git manually.")
-        log_function_exit(logger, "initialize")
-
-    def _is_git_installed(self) -> bool:
-        """Checks if the git command is available in PATH."""
-        return shutil.which("git") is not None
 
     async def _run_shell_command(self, command: str):
         """Helper to run shell commands and log output/errors."""
@@ -61,42 +40,6 @@ class GithubCloneService:
         
         log_function_exit(logger, "_run_shell_command", result=True)
         return True
-
-    async def _install_git(self):
-        """Attempts to install git using common package managers."""
-        log_function_entry(logger, "_install_git")
-        # Basic OS/Package manager detection
-        system = platform.system()
-        
-        if system != "Linux":
-            raise NotImplementedError(f"Automatic git installation not supported on {system}. Please install git manually.")
-
-        install_command = None
-        update_command = None
-
-        # Check for apt (Debian/Ubuntu)
-        if shutil.which("apt-get"):
-            update_command = "sudo apt-get update -y"
-            install_command = "sudo apt-get install -y git"
-        # Check for yum (CentOS/RHEL/Fedora)
-        elif shutil.which("yum"):
-            # No separate update needed usually, yum handles it
-            install_command = "sudo yum install -y git"
-        # Check for apk (Alpine)
-        elif shutil.which("apk"):
-             update_command = "sudo apk update"
-             install_command = "sudo apk add --no-cache git"
-        else:
-            raise EnvironmentError("Could not detect a supported package manager (apt, yum, apk). Please install git manually.")
-
-        try:
-            if update_command:
-                await self._run_shell_command(update_command)
-            await self._run_shell_command(install_command)
-        except Exception as e:
-            log_exception(logger, "Error during git installation command execution", e)
-            raise # Re-raise the exception
-        log_function_exit(logger, "_install_git")
 
     def _construct_clone_url(self, repo_url: str, access_token: str) -> str:
         """Constructs the clone URL with embedded access token."""
