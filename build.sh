@@ -13,7 +13,9 @@ APP_NAME="pulseup-agent" # Assuming the executable name from agent.spec is this
 mkdir -p ${OUTPUT_DIR}
 
 echo "Building the ${TARGET_PLATFORM} builder image..."
-docker-buildx build --platform "${TARGET_PLATFORM}" -t "${IMAGE_NAME}" -f Dockerfile . --load
+if ! docker-buildx build --platform "${TARGET_PLATFORM}" -t "${IMAGE_NAME}" -f Dockerfile . --load; then
+    docker buildx build --platform "${TARGET_PLATFORM}" -t "${IMAGE_NAME}" -f Dockerfile . --load
+fi
 
 echo "Running PyInstaller inside the container..."
 # Run the builder container and execute PyInstaller
