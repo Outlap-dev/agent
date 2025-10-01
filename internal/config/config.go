@@ -1,0 +1,200 @@
+package config
+
+import (
+	"fmt"
+	"os"
+	"strings"
+)
+
+// Build-time variables set by ldflags
+var (
+	Version   = "dev"
+	BuildDate = "unknown"
+	GitCommit = "unknown"
+)
+
+// Config holds the application configuration
+type Config struct {
+	WebSocketURL         string
+	APIBaseURL           string
+	ServerPort           int
+	Debug                bool
+	DockerHost           string
+	LogLevel             string
+	ReconnectDelay       int
+	MaxReconnects        int
+	EnableCaddy          bool
+	CaddyConfigDir       string
+	CaddyDataDir         string
+	ReconnectEnabled     bool
+	ReconnectMaxAttempts int
+	ReconnectInterval    int
+	ReconnectBackoffMax  int
+	// Version check configuration
+	VersionCheckEnabled  bool
+	VersionCheckInterval int // in seconds
+	VersionCheckRepo     string
+	// Authentication configuration
+	AuthWaitForConfirmation      bool
+	AuthPermanentFailureCooldown int // in seconds
+
+	// Update configuration
+	UpdateEnabled       bool
+	UpdateAutoApply     bool
+	UpdateIntervalHours int
+	UpdateURL           string
+	UpdatePublicKeyPath string
+
+	// mTLS and enrollment configuration
+	CertDir   string
+	JoinToken string
+}
+
+// Load loads configuration from environment variables
+func Load() (*Config, error) {
+	config := &Config{
+		WebSocketURL:                 getEnv("WEBSOCKET_URL", "ws://host.docker.internal:8000/ws"),
+		APIBaseURL:                   getEnv("API_BASE_URL", "http://host.docker.internal:8000"),
+		ServerPort:                   getEnvInt("SERVER_PORT", 8080),
+		Debug:                        getEnvBool("DEBUG", false),
+		DockerHost:                   getEnv("DOCKER_HOST", ""),
+		LogLevel:                     getEnv("LOG_LEVEL", "info"),
+		ReconnectDelay:               getEnvInt("RECONNECT_DELAY", 5),
+		MaxReconnects:                getEnvInt("MAX_RECONNECTS", 10),
+		EnableCaddy:                  getEnvBool("ENABLE_CADDY", true),
+		CaddyConfigDir:               getEnv("CADDY_CONFIG_DIR", "/etc/pulseup-agent/caddy"),
+		CaddyDataDir:                 getEnv("CADDY_DATA_DIR", "/etc/pulseup-agent/caddy/data"),
+		ReconnectEnabled:             getEnvBool("RECONNECT_ENABLED", true),
+		ReconnectMaxAttempts:         getEnvInt("RECONNECT_MAX_ATTEMPTS", 10),
+		ReconnectInterval:            getEnvInt("RECONNECT_INTERVAL", 5),
+		ReconnectBackoffMax:          getEnvInt("RECONNECT_BACKOFF_MAX", 60),
+		VersionCheckEnabled:          getEnvBool("VERSION_CHECK_ENABLED", true),
+		VersionCheckInterval:         getEnvInt("VERSION_CHECK_INTERVAL", 300), // 5 minutes
+		VersionCheckRepo:             getEnv("VERSION_CHECK_REPO", "PulseUp-IO/pulseup-agent"),
+		AuthWaitForConfirmation:      getEnvBool("AUTH_WAIT_FOR_CONFIRMATION", true),
+		AuthPermanentFailureCooldown: getEnvInt("AUTH_PERMANENT_FAILURE_COOLDOWN", 3600), // 1 hour
+		UpdateEnabled:                getEnvBool("UPDATE_ENABLED", false),                // Disabled by default for safety
+		UpdateAutoApply:              getEnvBool("UPDATE_AUTO_APPLY", false),
+		UpdateIntervalHours:          getEnvInt("UPDATE_INTERVAL_HOURS", 6),
+		UpdateURL:                    getEnv("UPDATE_URL", "https://updates.pulseup.io/agent/releases/latest.json"),
+		UpdatePublicKeyPath:          getEnv("UPDATE_PUBLIC_KEY_PATH", "/etc/pulseup-agent/update_public.pem"),
+
+		// mTLS and enrollment configuration
+		CertDir:   getEnv("CERT_DIR", "/var/lib/pulseup/certs"),
+		JoinToken: getEnv("JOIN_TOKEN", ""),
+	}
+
+	// Validate required fields
+	if config.WebSocketURL == "" {
+		return nil, fmt.Errorf("WEBSOCKET_URL is required")
+	}
+
+	return config, nil
+}
+
+// ParseVersion parses a version string into a slice of integers
+func ParseVersion(versionStr string) []int {
+	if versionStr == "" {
+		return []int{0, 0, 0}
+	}
+
+	// Remove 'v' prefix if present
+	if versionStr[0] == 'v' {
+		versionStr = versionStr[1:]
+	}
+
+	// Split by dots and convert to integers
+	parts := strings.Split(versionStr, ".")
+	result := make([]int, len(parts))
+
+	for i, part := range parts {
+		// Remove any non-numeric suffixes (like "-beta", "-alpha", etc.)
+		numericPart := ""
+		for _, char := range part {
+			if char >= '0' && char <= '9' {
+				numericPart += string(char)
+			} else {
+				break
+			}
+		}
+
+		if numericPart == "" {
+			result[i] = 0
+		} else {
+			result[i] = parseInt(numericPart)
+		}
+	}
+
+	// Ensure at least 3 parts (major.minor.patch)
+	for len(result) < 3 {
+		result = append(result, 0)
+	}
+
+	return result
+}
+
+// IsNewerVersion checks if the latest version is newer than the current version
+func IsNewerVersion(current, latest string) bool {
+	currentParts := ParseVersion(current)
+	latestParts := ParseVersion(latest)
+
+	// Compare versions part by part
+	maxLen := len(currentParts)
+	if len(latestParts) > maxLen {
+		maxLen = len(latestParts)
+	}
+
+	// Pad shorter version with zeros
+	for len(currentParts) < maxLen {
+		currentParts = append(currentParts, 0)
+	}
+	for len(latestParts) < maxLen {
+		latestParts = append(latestParts, 0)
+	}
+
+	for i := 0; i < maxLen; i++ {
+		if latestParts[i] > currentParts[i] {
+			return true
+		} else if latestParts[i] < currentParts[i] {
+			return false
+		}
+	}
+
+	return false // Versions are equal
+}
+
+// GetVersionString returns the current version string
+func GetVersionString() string {
+	return Version
+}
+
+// Helper functions
+
+func getEnv(key, defaultValue string) string {
+	if value := os.Getenv(key); value != "" {
+		return value
+	}
+	return defaultValue
+}
+
+func getEnvInt(key string, defaultValue int) int {
+	if value := os.Getenv(key); value != "" {
+		if intVal := parseInt(value); intVal != 0 {
+			return intVal
+		}
+	}
+	return defaultValue
+}
+
+func getEnvBool(key string, defaultValue bool) bool {
+	if value := os.Getenv(key); value != "" {
+		return value == "true" || value == "1" || value == "yes"
+	}
+	return defaultValue
+}
+
+func parseInt(s string) int {
+	var result int
+	fmt.Sscanf(s, "%d", &result)
+	return result
+}

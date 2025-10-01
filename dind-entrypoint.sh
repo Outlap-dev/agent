@@ -16,5 +16,7 @@ while ! docker info > /dev/null 2>&1; do
     sleep 1
 done
 
-# Execute the command passed to the script (e.g., the Python agent)
+echo "Docker daemon is ready"
+
+# Execute the command passed to the script (e.g., the Go agent)
 exec "$@" 

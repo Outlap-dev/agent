@@ -1,15 +1,56 @@
 version: '3.8'
 
 services:
-  agent:
+  pulseup-agent:
     build:
       context: .
       dockerfile: Dockerfile
-    volumes:
-      - .:/app
-      - /var/run/docker.sock:/var/run/docker.sock
+      args:
+        VERSION: 1.0.1
+        BUILD_DATE: ${BUILD_DATE:-}
+        GIT_COMMIT: ${GIT_COMMIT:-unknown}
+        ENABLE_DEBUG: "false"
+    container_name: pulseup-agent
+    restart: unless-stopped
     environment:
-      - WEBSOCKET_URL=${WEBSOCKET_URL}
+      - WEBSOCKET_URL=${WEBSOCKET_URL:-ws://host.docker.internal:8000/ws/agent_v2}
+      - JOIN_TOKEN=${JOIN_TOKEN:-test-token}
+      - CERT_DIR=/var/lib/pulseup/certs
+      - LOG_LEVEL=${LOG_LEVEL:-DEBUG}
+      - LOG_FORMAT=text
+      - CONFIG_PATH=${CONFIG_PATH:-}
+      - PULSEUP_CADDY_HOST_PATH=/etc/pulseup-agent/caddy
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./certs:/var/lib/pulseup/certs
+      - caddy_data:/etc/pulseup-agent/caddy
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    group_add:
+      - ${DOCKER_SOCK_GROUP:-0}
+    privileged: true
+    networks:
+      - pulseup-network
+    depends_on:
+      - caddy
+
+  caddy:
+    image: caddy:latest
+    container_name: caddy
     restart: unless-stopped
     ports:
-      - "5679:5679" 
+      - "${CADDY_HTTP_PORT:-8080}:80"
+      - "${CADDY_HTTPS_PORT:-8443}:443"
+    volumes:
+      - caddy_config:/etc/caddy
+      - caddy_data:/data
+    networks:
+      - pulseup-network
+
+volumes:
+  caddy_config:
+  caddy_data:
+
+networks:
+  pulseup-network:
+    driver: bridge

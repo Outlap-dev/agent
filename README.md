@@ -1,51 +1,306 @@
-# PulseUp Machine Agent
+# PulseUp Agent
 
-A machine agent for PulseUp that handles application deployment on servers. This agent connects to the main PulseUp server via WebSocket and manages deployments on the host machine.
+A high-performance, containerized agent for the PulseUp platform, rewritten from Python to Go. Uses native WebSockets for real-time communication with PulseUp servers to manage applications, databases, and infrastructure.
 
-## Setup
+## Architecture
 
-1. Copy the environment file:
-```bash
-cp .env.example .env
+The Go agent follows a clean architecture pattern with the following structure:
+
+```
+pulseup-agent/
+├── cmd/agent/           # Main application entry point
+├── internal/
+│   ├── config/          # Configuration management  
+│   ├── services/        # Business logic services
+│   ├── handlers/        # Command handlers
+│   ├── websocket/       # Modular WebSocket client architecture
+│   └── testws/          # Test WebSocket server
+├── pkg/
+│   ├── types/           # Shared types and structures
+│   └── logger/          # Structured logging with slog
+├── docs/                # Documentation
+├── scripts/             # Build and deployment scripts
+└── go.mod
 ```
 
-2. Edit the `.env` file with your configuration:
-- `WEBSOCKET_URL`: WebSocket URL of the main PulseUp server
-- `AGENT_ID`: Unique identifier for this agent
+## Key Improvements over Python Version
 
-## Running with Docker
+1. **Native WebSockets**: Uses Gorilla WebSocket instead of Socket.IO for better performance and simpler protocol
+2. **Structured Logging**: Uses Go's structured logging with JSON output
+3. **Type Safety**: Strong typing throughout the application
+4. **Dependency Injection**: Clean service container pattern for managing dependencies
+5. **Graceful Shutdown**: Proper context-based shutdown handling
+6. **Interface-based Design**: All services implement interfaces for better testability
 
-Start the agent:
+## Services
+
+### Core Services
+- **WebSocket Manager**: Handles WebSocket connections with automatic reconnection
+- **Service Container**: Manages all services and their dependencies
+- **Handler Registry**: Routes commands to appropriate handlers
+
+### Business Services
+- **Docker Service**: Container management operations
+- **Git Service**: Repository cloning and management
+- **Build Service**: Application building and deployment
+- **System Service**: Hardware info and system metrics
+- **Database Service**: Database operations (planned)
+- **Caddy Service**: Reverse proxy and SSL management (planned)
+
+## Configuration
+
+The agent supports configuration via environment variables or config files:
+
+- `.env` file (for local development)
+- `/etc/pulseup-agent/config` (for production)
+
+Required environment variables:
+- `WEBSOCKET_URL`: WebSocket server URL (default: `ws://ws.pulseup.io/ws/agent`)
+- `JOIN_TOKEN`: One-time enrollment token for obtaining mTLS certificates (only needed for initial enrollment)
+
+Optional auto-reconnection settings:
+- `RECONNECT_ENABLED`: Enable automatic reconnection (default: `true`)
+- `RECONNECT_INTERVAL`: Initial reconnection delay in seconds (default: `5`)
+- `RECONNECT_MAX_ATTEMPTS`: Maximum reconnection attempts, 0 for infinite (default: `0`)
+- `RECONNECT_BACKOFF_MAX`: Maximum backoff delay in seconds (default: `60`)
+
+## Building and Running
+
+### Prerequisites
+- Docker and Docker Compose
+- Go 1.23 or later (for local development)
+- Git (for repository operations)
+
+### Quick Start
+
+#### Using Docker Compose (Recommended)
 ```bash
+# Start development environment (equivalent to old 'make dev')
 docker-compose up --build
-```
 
-Run in background:
-```bash
-docker-compose up -d --build
-```
+# Start with debugging (equivalent to old 'make dev-debug')
+docker-compose -f docker-compose.debug.yml up --build
 
-Stop the agent:
-```bash
+# Stop services
 docker-compose down
+
+# View logs
+docker-compose logs -f pulseup-agent
 ```
+
+#### Local Development
+```bash
+# Build binaries locally
+go build -o pulseup-supervisor ./cmd/supervisor
+go build -o pulseup-worker ./cmd/worker
+
+# Run tests
+./test.sh
+```
+
+#### Configuration
+Create a `.env` file for local development:
+```bash
+# Example .env file
+WEBSOCKET_URL=ws://your-server.com/ws/agent_v2
+JOIN_TOKEN=your-join-token
+LOG_LEVEL=DEBUG
+CADDY_HTTP_PORT=8080
+CADDY_HTTPS_PORT=8443
+```
+
+#### Environment Variables
+- `WEBSOCKET_URL`: WebSocket server URL (default: `ws://host.docker.internal:3000/ws/agent_v2`)
+- `JOIN_TOKEN`: One-time enrollment token (default: `test-token`)
+- `LOG_LEVEL`: Debug level (default: `DEBUG`)
+- `CADDY_HTTP_PORT`: HTTP port for Caddy (default: `8080`)
+- `CADDY_HTTPS_PORT`: HTTPS port for Caddy (default: `8443`)
 
 ## Development
 
-The agent will:
-1. Connect to the specified WebSocket server
-2. Send an initial identification message
-3. Log all received messages
-4. Automatically reconnect on connection loss
+### Adding New Handlers
 
-## Logs
+1. Create a new handler in `internal/handlers/`:
 
-Logs are output to stdout/stderr and can be viewed with:
-```bash
-docker-compose logs -f
+```go
+package handlers
+
+import (
+    "context"
+    "encoding/json"
+    "pulseup-agent-go/pkg/types"
+)
+
+type MyHandler struct {
+    *BaseHandler
+}
+
+func NewMyHandler(logger *logger.Logger, services ServiceProvider) *MyHandler {
+    return &MyHandler{
+        BaseHandler: NewBaseHandler(logger.With("handler", "my_handler"), services),
+    }
+}
+
+func (h *MyHandler) GetCommand() string {
+    return "my_command"
+}
+
+func (h *MyHandler) Handle(ctx context.Context, data json.RawMessage) (*types.CommandResponse, error) {
+    // Implementation here
+    return &types.CommandResponse{
+        Success: true,
+        Data:    "result",
+    }, nil
+}
 ```
 
-## Building
-```bash
-pyinstaller agent.spec
+2. Register the handler in `internal/services/container.go`:
+
+```go
+func (c *ServiceContainer) registerHandlers() error {
+    // ... existing handlers ...
+    c.handlerRegistry.Register(handlers.NewMyHandler(c.logger, serviceProvider))
+    return nil
+}
 ```
+
+### Adding New Services
+
+1. Define the interface in `internal/services/interfaces.go`
+2. Create the implementation in `internal/services/my_service.go`
+3. Add it to the service container in `internal/services/container.go`
+4. Update the service provider if handlers need access to it
+
+## WebSocket Protocol
+
+The agent uses a simple JSON-based protocol over WebSockets:
+
+### Authentication
+Upon connection, the agent immediately sends an authentication message:
+```json
+{
+    "type": "auth",
+    "token": "your-agent-token-here"
+}
+```
+
+### Incoming Messages
+```json
+{
+    "event": "command",
+    "data": {
+        "command": "agent.hardware.info",
+        "data": {}
+    }
+}
+```
+
+### Outgoing Responses
+```json
+{
+    "event": "command_response",
+    "data": {
+        "success": true,
+        "data": { ... },
+        "error": ""
+    }
+}
+```
+
+## Logging
+
+The agent uses structured JSON logging:
+
+```json
+{
+    "time": "2024-01-01T12:00:00Z",
+    "level": "INFO",
+    "msg": "Starting PulseUp Agent",
+    "component": "main"
+}
+```
+
+Log levels: DEBUG, INFO, WARN, ERROR
+
+## Deployment
+
+### Systemd Service
+Create `/etc/systemd/system/pulseup-agent.service`:
+
+```ini
+[Unit]
+Description=PulseUp Agent
+After=network.target
+
+[Service]
+Type=simple
+User=pulseup
+WorkingDirectory=/opt/pulseup-agent
+ExecStart=/opt/pulseup-agent/pulseup-agent
+Restart=always
+RestartSec=5
+Environment=WEBSOCKET_URL=ws://your-server.com/ws/agent
+EnvironmentFile=/etc/pulseup-agent/config
+
+[Install]
+WantedBy=multi-user.target
+```
+
+### Docker
+```dockerfile
+FROM golang:1.21-alpine AS builder
+WORKDIR /app
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
+RUN go build -o pulseup-agent ./cmd/agent
+
+FROM alpine:latest
+RUN apk --no-cache add ca-certificates
+WORKDIR /root/
+COPY --from=builder /app/pulseup-agent .
+CMD ["./pulseup-agent"]
+```
+
+## Testing
+
+The project includes comprehensive test coverage:
+
+```bash
+# Run all tests
+./test.sh
+
+# Run tests with coverage
+./test.sh -c
+
+# Run tests with verbose output
+./test.sh -v
+
+# Run tests with race detector
+./test.sh -r
+
+# Run specific test packages
+./test.sh -p ./internal/handlers
+./test.sh -p ./internal/services
+```
+
+## Contributing
+
+We welcome contributions! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
+
+### Development Setup
+1. Clone the repository
+2. Install Docker and Docker Compose
+3. Copy `.env.debug.example` to `.env` and configure
+4. Run `docker-compose up --build` to start development environment
+5. Run `./test.sh` to verify setup
+
+### Code Style
+- Follow standard Go conventions
+- Use structured logging with the provided logger
+- Add tests for new functionality  
+- Ensure all tests pass before submitting PRs
+
+## License
+
+MIT License - see [LICENSE](LICENSE) for details.
