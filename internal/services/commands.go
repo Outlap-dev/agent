@@ -361,7 +361,6 @@ func (cs *commandService) restartAgent(ctx context.Context) (*types.CommandResul
 	// Try Docker container restart if running in Docker
 	dockerResult := cs.executor.Execute(ctx, "docker", []string{"restart", "pulseup-agent"}, nil)
 	if dockerResult.Error == nil {
-		attempts = append(attempts, fmt.Sprintf("docker restart: %s", dockerResult.Stdout+dockerResult.Stderr))
 		return &types.CommandResult{
 			Success:   true,
 			Output:    fmt.Sprintf("Agent container restarted: %s", dockerResult.Stdout+dockerResult.Stderr),

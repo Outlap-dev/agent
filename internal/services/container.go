@@ -4,8 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
-	"strings"
 	"time"
 
 	"pulseup-agent-go/internal/bootstrap"
@@ -56,11 +54,11 @@ type ServiceContainer struct {
 	dockerComposeService  DockerComposeService
 	monitoringService     MonitoringService
 	containerEventService ContainerEventService
-	versionCheckService   VersionCheckService
 	updateService         UpdateService
 	commandService        CommandService
 	packageService        PackageService
 	agentLogService       AgentLogService
+	sessionManager        *AgentSession
 
 	// Service implementations
 	dockerSvc         *DockerServiceImpl
@@ -76,7 +74,6 @@ type ServiceContainer struct {
 	dockerComposeSvc  *DockerComposeServiceImpl
 	monitoringSvc     *MonitoringServiceImpl
 	containerEventSvc *ContainerEventServiceImpl
-	versionCheckSvc   *versionCheckService
 	updateSvc         *updateService
 	commandSvc        *commandService
 	packageSvc        *PackageServiceImpl
@@ -137,6 +134,10 @@ func (c *ServiceContainer) Initialize(ctx context.Context) error {
 	c.servicesBundle = newServiceBundle(c.config, c.baseLogger, c.wsAdapter, c.logger, c.ipcClient)
 	c.servicesBundle.apply(c)
 
+	if c.sessionManager == nil && c.updateService != nil {
+		c.sessionManager = NewAgentSession(c.config, c.updateService, c.baseLogger)
+	}
+
 	// Prepare hardware reporter to publish inventory details on initial connection
 	c.hardwareReporter = NewHardwareReporter(c.baseLogger, c.systemService, c.wsAdapter)
 	if c.mtlsClient != nil {
@@ -168,16 +169,15 @@ func (c *ServiceContainer) Initialize(ctx context.Context) error {
 // Start starts all services
 func (c *ServiceContainer) Start(ctx context.Context) error {
 	// Handle enrollment if join token is provided and no valid certificate exists yet
+	if c.sessionManager != nil {
+		c.sessionManager.SetContext(ctx)
+	}
+
 	hasCertificate := c.certManager != nil && c.certManager.HasCertificate()
 	if hasCertificate {
-		info, err := c.certManager.GetCertificateInfo()
+		_, err := c.certManager.GetCertificateInfo()
 		if err != nil {
 			c.logger.Warn("Failed to read existing certificate info", "error", err)
-		} else if info != nil {
-			c.logger.Info("Valid certificate found",
-				"not_before", info.NotBefore,
-				"not_after", info.NotAfter,
-				"subject", info.Subject)
 		}
 	} else if c.enroller != nil {
 		c.logger.Info("Join token provided, attempting agent enrollment")
@@ -205,28 +205,27 @@ func (c *ServiceContainer) Start(ctx context.Context) error {
 		return fmt.Errorf("failed to establish mTLS websocket connection: %w", err)
 	}
 
-	// Wait for initial connection to be established
-	maxWait := 30 * time.Second
-	connected := false
+	// Wait for initial connection to be established, continuing to retry until success or context cancellation
+	warningInterval := 30 * time.Second
+	waitTicker := time.NewTicker(100 * time.Millisecond)
+	defer waitTicker.Stop()
 
-	for start := time.Now(); time.Since(start) < maxWait; {
+	firstAttempt := time.Now()
+	lastWarning := firstAttempt
+
+	for {
 		if c.mtlsClient.IsConnected() {
-			connected = true
 			break
 		}
 
-		// Check if context was cancelled
 		select {
 		case <-ctx.Done():
 			return fmt.Errorf("context cancelled while waiting for connection")
-		default:
+		case <-waitTicker.C:
+			if time.Since(lastWarning) >= warningInterval {
+				lastWarning = time.Now()
+			}
 		}
-
-		time.Sleep(100 * time.Millisecond)
-	}
-
-	if !connected {
-		return fmt.Errorf("failed to establish WebSocket connection within %v", maxWait)
 	}
 
 	// Start background services
@@ -242,12 +241,6 @@ func (c *ServiceContainer) Shutdown(ctx context.Context) error {
 	c.logger.Info("Shutting down services")
 
 	// Stop version check service
-	if c.versionCheckService != nil {
-		if err := c.versionCheckService.Stop(ctx); err != nil {
-			c.logger.Error("Error stopping version check service", "error", err)
-		}
-	}
-
 	// Stop update service
 	if c.updateService != nil {
 		if err := c.updateService.StopAutoUpdateLoop(); err != nil {
@@ -297,7 +290,6 @@ func (c *ServiceContainer) registerHandlers() error {
 		nixpacksService:      c.nixpacksService,
 		dockerComposeService: c.dockerComposeService,
 		monitoringService:    c.monitoringService,
-		versionCheckService:  c.versionCheckService,
 		updateService:        c.updateService,
 		commandService:       c.commandService,
 		packageService:       c.packageService,
@@ -324,6 +316,7 @@ func (c *ServiceContainer) registerWebSocketHandlers() {
 	register("command", c.handleCommand)
 	// Register call handler for call-based messages
 	register("call", c.handleCall)
+	register("agent.config_updated", c.handleAgentConfigUpdate)
 
 	// Register direct event handlers for each command
 	allHandlers := c.handlerRegistry.GetAllHandlers()
@@ -393,15 +386,23 @@ func (c *ServiceContainer) startBackgroundServices(ctx context.Context) {
 		c.logger.Error("Failed to start monitoring service", "error", err)
 	}
 
-	// Start version check service
-	if err := c.versionCheckService.Start(ctx); err != nil {
-		c.logger.Error("Failed to start version check service", "error", err)
+}
+
+func (c *ServiceContainer) handleAgentConfigUpdate(data json.RawMessage) (*types.CommandResponse, error) {
+	if c.sessionManager == nil {
+		return &types.CommandResponse{Success: true}, nil
 	}
 
-	// Start update service auto-update loop
-	if err := c.updateService.StartAutoUpdateLoop(ctx); err != nil {
-		c.logger.Error("Failed to start update service", "error", err)
+	var payload types.AgentConfigPayload
+	if len(data) > 0 {
+		if err := json.Unmarshal(data, &payload); err != nil {
+			c.logger.Error("Failed to parse agent config payload", "error", err)
+			return &types.CommandResponse{Success: false, Error: "invalid agent config payload"}, nil
+		}
 	}
+
+	c.sessionManager.ApplyConfig(payload)
+	return &types.CommandResponse{Success: true}, nil
 }
 
 // serviceProviderImpl implements the ServiceProvider interface
@@ -419,7 +420,6 @@ type serviceProviderImpl struct {
 	nixpacksService      NixpacksService
 	dockerComposeService DockerComposeService
 	monitoringService    MonitoringService
-	versionCheckService  VersionCheckService
 	updateService        UpdateService
 	commandService       CommandService
 	packageService       PackageService
@@ -488,10 +488,6 @@ func (sp *serviceProviderImpl) GetDatabaseService() handlers.DatabaseService {
 	return sp.databaseService
 }
 
-func (sp *serviceProviderImpl) GetVersionCheckService() handlers.VersionCheckService {
-	return sp.versionCheckService
-}
-
 func (sp *serviceProviderImpl) GetUpdateService() handlers.UpdateService {
 	return sp.updateService
 }
@@ -516,11 +512,6 @@ func (c *ServiceContainer) HandlerRegistry() *handlers.Registry {
 // BaseLogger provides the base logger for route registration.
 func (c *ServiceContainer) BaseLogger() *logger.Logger {
 	return c.baseLogger
-}
-
-// AgentToken returns the agent token used for authenticated API requests.
-func (c *ServiceContainer) AgentToken() string {
-	return strings.TrimSpace(os.Getenv("AGENT_TOKEN"))
 }
 
 // APIBaseURL returns the base API URL for controller helpers.

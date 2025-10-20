@@ -87,7 +87,6 @@ func (m *MonitoringServiceImpl) StartMetricsCollection(ctx context.Context) erro
 		ctx = context.Background()
 	}
 
-	m.logger.Info("Starting monitoring system")
 	m.enabled = true
 	m.startTime = time.Now()
 
@@ -306,10 +305,7 @@ func (m *MonitoringServiceImpl) collectContainerMetrics(ctx context.Context, con
 	healthStatus := m.determineHealthStatus(&inspect)
 
 	// Clean container name
-	cleanName := containerName
-	if strings.HasPrefix(cleanName, "/") {
-		cleanName = cleanName[1:]
-	}
+	cleanName := strings.TrimPrefix(containerName, "/")
 
 	// Create basic metrics (detailed stats collection can be added later)
 	metrics := &pulseuptypes.ContainerMetrics{
@@ -373,12 +369,6 @@ func (m *MonitoringServiceImpl) incrementHealthErrors() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.healthErrors++
-}
-
-// calculateCPUPercent calculates CPU usage percentage from Docker stats
-// TODO: Implement when Docker stats API is properly integrated
-func calculateCPUPercent() float64 {
-	return 0 // Placeholder implementation
 }
 
 // determineHealthStatus determines the health status of a container
@@ -715,11 +705,7 @@ func (m *MonitoringServiceImpl) getContainerNameByID(containerID string) string 
 	if m.dockerClient != nil {
 		inspect, err := m.dockerClient.ContainerInspect(m.runtimeContext(), containerID)
 		if err == nil && len(inspect.Name) > 0 {
-			name := inspect.Name
-			if strings.HasPrefix(name, "/") {
-				name = name[1:]
-			}
-			return name
+			return strings.TrimPrefix(inspect.Name, "/")
 		}
 	}
 

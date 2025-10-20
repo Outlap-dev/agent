@@ -23,6 +23,37 @@ func NewServiceManager(logger *logger.Logger) *ServiceManager {
 	}
 }
 
+// executeSystemctlCommand executes a systemctl command with common error handling
+func (sm *ServiceManager) executeSystemctlCommand(ctx context.Context, serviceName, command, action string) (*ipc.PrivilegedResponse, error) {
+	sm.logger.Info(fmt.Sprintf("%s service", strings.Title(action)), "service", serviceName)
+
+	// Execute systemctl command (supervisor already runs as root)
+	cmd := exec.CommandContext(ctx, "systemctl", command, serviceName)
+	output, err := cmd.CombinedOutput()
+
+	if err != nil {
+		sm.logger.Error(fmt.Sprintf("Failed to %s service", action), "service", serviceName, "error", err, "output", string(output))
+		return &ipc.PrivilegedResponse{
+			Success: false,
+			Error:   fmt.Sprintf("failed to %s service: %v", action, err),
+			Data: map[string]interface{}{
+				"service": serviceName,
+				"output":  string(output),
+			},
+		}, nil
+	}
+
+	sm.logger.Info(fmt.Sprintf("Service %s successfully", action), "service", serviceName)
+	return &ipc.PrivilegedResponse{
+		Success: true,
+		Data: map[string]interface{}{
+			"message": fmt.Sprintf("Service '%s' %s successfully", serviceName, action),
+			"service": serviceName,
+			"output":  string(output),
+		},
+	}, nil
+}
+
 // RestartService restarts a system service
 func (sm *ServiceManager) RestartService(ctx context.Context, args map[string]interface{}) (*ipc.PrivilegedResponse, error) {
 	serviceName, ok := args["service_name"].(string)
@@ -40,33 +71,7 @@ func (sm *ServiceManager) RestartService(ctx context.Context, args map[string]in
 		}, nil
 	}
 
-	sm.logger.Info("Restarting service", "service", serviceName)
-
-	// Execute systemctl restart command (supervisor already runs as root)
-	cmd := exec.CommandContext(ctx, "systemctl", "restart", serviceName)
-	output, err := cmd.CombinedOutput()
-
-	if err != nil {
-		sm.logger.Error("Failed to restart service", "service", serviceName, "error", err, "output", string(output))
-		return &ipc.PrivilegedResponse{
-			Success: false,
-			Error:   fmt.Sprintf("failed to restart service: %v", err),
-			Data: map[string]interface{}{
-				"service": serviceName,
-				"output":  string(output),
-			},
-		}, nil
-	}
-
-	sm.logger.Info("Service restarted successfully", "service", serviceName)
-	return &ipc.PrivilegedResponse{
-		Success: true,
-		Data: map[string]interface{}{
-			"message": fmt.Sprintf("Service '%s' restarted successfully", serviceName),
-			"service": serviceName,
-			"output":  string(output),
-		},
-	}, nil
+	return sm.executeSystemctlCommand(ctx, serviceName, "restart", "restart")
 }
 
 // StartService starts a system service
@@ -86,33 +91,7 @@ func (sm *ServiceManager) StartService(ctx context.Context, args map[string]inte
 		}, nil
 	}
 
-	sm.logger.Info("Starting service", "service", serviceName)
-
-	// Execute systemctl start command (supervisor already runs as root)
-	cmd := exec.CommandContext(ctx, "systemctl", "start", serviceName)
-	output, err := cmd.CombinedOutput()
-
-	if err != nil {
-		sm.logger.Error("Failed to start service", "service", serviceName, "error", err, "output", string(output))
-		return &ipc.PrivilegedResponse{
-			Success: false,
-			Error:   fmt.Sprintf("failed to start service: %v", err),
-			Data: map[string]interface{}{
-				"service": serviceName,
-				"output":  string(output),
-			},
-		}, nil
-	}
-
-	sm.logger.Info("Service started successfully", "service", serviceName)
-	return &ipc.PrivilegedResponse{
-		Success: true,
-		Data: map[string]interface{}{
-			"message": fmt.Sprintf("Service '%s' started successfully", serviceName),
-			"service": serviceName,
-			"output":  string(output),
-		},
-	}, nil
+	return sm.executeSystemctlCommand(ctx, serviceName, "start", "start")
 }
 
 // StopService stops a system service
@@ -132,33 +111,7 @@ func (sm *ServiceManager) StopService(ctx context.Context, args map[string]inter
 		}, nil
 	}
 
-	sm.logger.Info("Stopping service", "service", serviceName)
-
-	// Execute systemctl stop command (supervisor already runs as root)
-	cmd := exec.CommandContext(ctx, "systemctl", "stop", serviceName)
-	output, err := cmd.CombinedOutput()
-
-	if err != nil {
-		sm.logger.Error("Failed to stop service", "service", serviceName, "error", err, "output", string(output))
-		return &ipc.PrivilegedResponse{
-			Success: false,
-			Error:   fmt.Sprintf("failed to stop service: %v", err),
-			Data: map[string]interface{}{
-				"service": serviceName,
-				"output":  string(output),
-			},
-		}, nil
-	}
-
-	sm.logger.Info("Service stopped successfully", "service", serviceName)
-	return &ipc.PrivilegedResponse{
-		Success: true,
-		Data: map[string]interface{}{
-			"message": fmt.Sprintf("Service '%s' stopped successfully", serviceName),
-			"service": serviceName,
-			"output":  string(output),
-		},
-	}, nil
+	return sm.executeSystemctlCommand(ctx, serviceName, "stop", "stop")
 }
 
 // GetServiceStatus gets the status of a system service
@@ -177,8 +130,6 @@ func (sm *ServiceManager) GetServiceStatus(ctx context.Context, args map[string]
 			Error:   fmt.Sprintf("invalid service name: %v", err),
 		}, nil
 	}
-
-	sm.logger.Debug("Getting service status", "service", serviceName)
 
 	// Execute systemctl status command
 	cmd := exec.CommandContext(ctx, "systemctl", "status", serviceName, "--no-pager")
@@ -244,33 +195,7 @@ func (sm *ServiceManager) EnableService(ctx context.Context, args map[string]int
 		}, nil
 	}
 
-	sm.logger.Info("Enabling service", "service", serviceName)
-
-	// Execute systemctl enable command (supervisor already runs as root)
-	cmd := exec.CommandContext(ctx, "systemctl", "enable", serviceName)
-	output, err := cmd.CombinedOutput()
-
-	if err != nil {
-		sm.logger.Error("Failed to enable service", "service", serviceName, "error", err, "output", string(output))
-		return &ipc.PrivilegedResponse{
-			Success: false,
-			Error:   fmt.Sprintf("failed to enable service: %v", err),
-			Data: map[string]interface{}{
-				"service": serviceName,
-				"output":  string(output),
-			},
-		}, nil
-	}
-
-	sm.logger.Info("Service enabled successfully", "service", serviceName)
-	return &ipc.PrivilegedResponse{
-		Success: true,
-		Data: map[string]interface{}{
-			"message": fmt.Sprintf("Service '%s' enabled successfully", serviceName),
-			"service": serviceName,
-			"output":  string(output),
-		},
-	}, nil
+	return sm.executeSystemctlCommand(ctx, serviceName, "enable", "enable")
 }
 
 // DisableService disables a system service
@@ -290,33 +215,7 @@ func (sm *ServiceManager) DisableService(ctx context.Context, args map[string]in
 		}, nil
 	}
 
-	sm.logger.Info("Disabling service", "service", serviceName)
-
-	// Execute systemctl disable command (supervisor already runs as root)
-	cmd := exec.CommandContext(ctx, "systemctl", "disable", serviceName)
-	output, err := cmd.CombinedOutput()
-
-	if err != nil {
-		sm.logger.Error("Failed to disable service", "service", serviceName, "error", err, "output", string(output))
-		return &ipc.PrivilegedResponse{
-			Success: false,
-			Error:   fmt.Sprintf("failed to disable service: %v", err),
-			Data: map[string]interface{}{
-				"service": serviceName,
-				"output":  string(output),
-			},
-		}, nil
-	}
-
-	sm.logger.Info("Service disabled successfully", "service", serviceName)
-	return &ipc.PrivilegedResponse{
-		Success: true,
-		Data: map[string]interface{}{
-			"message": fmt.Sprintf("Service '%s' disabled successfully", serviceName),
-			"service": serviceName,
-			"output":  string(output),
-		},
-	}, nil
+	return sm.executeSystemctlCommand(ctx, serviceName, "disable", "disable")
 }
 
 // ReloadSystemd reloads systemd daemon configuration
@@ -344,68 +243,6 @@ func (sm *ServiceManager) ReloadSystemd(ctx context.Context, args map[string]int
 		Data: map[string]interface{}{
 			"message": "Systemd daemon reloaded successfully",
 			"output":  string(output),
-		},
-	}, nil
-}
-
-// GetServiceLogs gets logs for a system service
-func (sm *ServiceManager) GetServiceLogs(ctx context.Context, args map[string]interface{}) (*ipc.PrivilegedResponse, error) {
-	serviceName, ok := args["service_name"].(string)
-	if !ok || serviceName == "" {
-		return &ipc.PrivilegedResponse{
-			Success: false,
-			Error:   "service_name is required",
-		}, nil
-	}
-
-	if err := sm.validateServiceName(serviceName); err != nil {
-		return &ipc.PrivilegedResponse{
-			Success: false,
-			Error:   fmt.Sprintf("invalid service name: %v", err),
-		}, nil
-	}
-
-	sm.logger.Debug("Getting service logs", "service", serviceName)
-
-	// Parse log options
-	lines := "100" // Default to last 100 lines
-	if linesArg, ok := args["lines"].(string); ok {
-		lines = linesArg
-	}
-
-	follow := false
-	if followArg, ok := args["follow"].(bool); ok {
-		follow = followArg
-	}
-
-	// Build journalctl command
-	cmdArgs := []string{"journalctl", "-u", serviceName, "--no-pager", "-n", lines}
-	if follow {
-		cmdArgs = append(cmdArgs, "-f")
-	}
-
-	// Execute journalctl command
-	cmd := exec.CommandContext(ctx, cmdArgs[0], cmdArgs[1:]...)
-	output, err := cmd.CombinedOutput()
-
-	if err != nil {
-		sm.logger.Error("Failed to get service logs", "service", serviceName, "error", err)
-		return &ipc.PrivilegedResponse{
-			Success: false,
-			Error:   fmt.Sprintf("failed to get service logs: %v", err),
-		}, nil
-	}
-
-	logs := string(output)
-	sm.logger.Debug("Service logs retrieved", "service", serviceName, "size", len(logs))
-
-	return &ipc.PrivilegedResponse{
-		Success: true,
-		Data: map[string]interface{}{
-			"service": serviceName,
-			"logs":    logs,
-			"lines":   lines,
-			"follow":  follow,
 		},
 	}, nil
 }
@@ -481,10 +318,4 @@ func (sm *ServiceManager) validateServiceName(name string) error {
 	}
 
 	return nil
-}
-
-// isSystemdAvailable checks if systemd is available on the system
-func (sm *ServiceManager) isSystemdAvailable() bool {
-	_, err := exec.LookPath("systemctl")
-	return err == nil
 }

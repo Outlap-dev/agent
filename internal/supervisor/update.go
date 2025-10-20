@@ -3,7 +3,6 @@ package supervisor
 
 import (
 	"context"
-	"crypto/sha256"
 	"fmt"
 	"io"
 	"os"
@@ -14,13 +13,15 @@ import (
 
 	"pulseup-agent-go/internal/config"
 	"pulseup-agent-go/internal/ipc"
+	"pulseup-agent-go/internal/update"
 	"pulseup-agent-go/pkg/logger"
 )
 
 // UpdateManager handles privileged agent update operations
 type UpdateManager struct {
-	logger *logger.Logger
-	config *config.Config
+	logger    *logger.Logger
+	config    *config.Config
+	validator *update.Validator
 }
 
 // NewUpdateManager creates a new update manager
@@ -29,6 +30,20 @@ func NewUpdateManager(logger *logger.Logger, config *config.Config) *UpdateManag
 		logger: logger.With("service", "update_manager"),
 		config: config,
 	}
+}
+
+func (um *UpdateManager) ensureValidator() (*update.Validator, error) {
+	if um.validator != nil {
+		return um.validator, nil
+	}
+
+	validator, err := update.NewValidator(um.config.UpdatePublicKeyPath)
+	if err != nil {
+		return nil, err
+	}
+
+	um.validator = validator
+	return validator, nil
 }
 
 // UpdateAgent performs an agent update
@@ -41,7 +56,8 @@ func (um *UpdateManager) UpdateAgent(ctx context.Context, args map[string]interf
 		}, nil
 	}
 
-	um.logger.Info("Starting agent update", "update_file", updateFilePath)
+	version, _ := args["version"].(string)
+	um.logger.Info("Starting agent update", "update_file", updateFilePath, "version", version)
 
 	// Validate update file path
 	if err := um.validateUpdateFile(updateFilePath); err != nil {
@@ -51,17 +67,53 @@ func (um *UpdateManager) UpdateAgent(ctx context.Context, args map[string]interf
 		}, nil
 	}
 
-	// Verify signature if provided
-	if signature, ok := args["signature"].(string); ok && signature != "" {
-		if err := um.verifySignature(updateFilePath, signature); err != nil {
-			um.logger.Error("Update signature verification failed", "error", err)
-			return &ipc.PrivilegedResponse{
-				Success: false,
-				Error:   fmt.Sprintf("signature verification failed: %v", err),
-			}, nil
-		}
-		um.logger.Info("Update signature verified successfully")
+	manifest, manifestOK := args["checksum_manifest"].(string)
+	signature, signatureOK := args["signature"].(string)
+	if !manifestOK || strings.TrimSpace(manifest) == "" || !signatureOK || strings.TrimSpace(signature) == "" {
+		return &ipc.PrivilegedResponse{
+			Success: false,
+			Error:   "checksum_manifest and signature are required",
+		}, nil
 	}
+
+	validator, err := um.ensureValidator()
+	if err != nil {
+		um.logger.Error("Failed to initialize update validator", "error", err)
+		return &ipc.PrivilegedResponse{
+			Success: false,
+			Error:   fmt.Sprintf("failed to initialize validator: %v", err),
+		}, nil
+	}
+
+	trimmedManifest := strings.TrimSpace(manifest)
+	trimmedSignature := strings.TrimSpace(signature)
+
+	if err := validator.VerifySignature([]byte(trimmedManifest), trimmedSignature); err != nil {
+		um.logger.Error("Update signature verification failed", "error", err)
+		return &ipc.PrivilegedResponse{
+			Success: false,
+			Error:   fmt.Sprintf("signature verification failed: %v", err),
+		}, nil
+	}
+
+	checksum, err := update.ParseChecksumManifest(trimmedManifest)
+	if err != nil {
+		um.logger.Error("Invalid checksum manifest", "error", err)
+		return &ipc.PrivilegedResponse{
+			Success: false,
+			Error:   fmt.Sprintf("invalid checksum manifest: %v", err),
+		}, nil
+	}
+
+	if err := update.VerifyFileHash(updateFilePath, checksum); err != nil {
+		um.logger.Error("Checksum verification failed", "error", err)
+		return &ipc.PrivilegedResponse{
+			Success: false,
+			Error:   fmt.Sprintf("checksum verification failed: %v", err),
+		}, nil
+	}
+
+	um.logger.Info("Update payload verified", "checksum", checksum)
 
 	// Create backup of current binaries
 	backupDir, err := um.createBackup()
@@ -76,12 +128,12 @@ func (um *UpdateManager) UpdateAgent(ctx context.Context, args map[string]interf
 	// Install new binaries
 	if err := um.installUpdate(updateFilePath); err != nil {
 		um.logger.Error("Failed to install update", "error", err)
-		
+
 		// Attempt to restore from backup
 		if restoreErr := um.restoreFromBackup(backupDir); restoreErr != nil {
 			um.logger.Error("Failed to restore from backup", "restore_error", restoreErr)
 		}
-		
+
 		return &ipc.PrivilegedResponse{
 			Success: false,
 			Error:   fmt.Sprintf("failed to install update: %v", err),
@@ -199,31 +251,6 @@ func (um *UpdateManager) validateUpdateFile(filePath string) error {
 	return nil
 }
 
-// verifySignature verifies the signature of an update file
-func (um *UpdateManager) verifySignature(filePath, signature string) error {
-	// Calculate file hash
-	file, err := os.Open(filePath)
-	if err != nil {
-		return fmt.Errorf("failed to open file for hashing: %v", err)
-	}
-	defer file.Close()
-
-	hasher := sha256.New()
-	if _, err := io.Copy(hasher, file); err != nil {
-		return fmt.Errorf("failed to calculate file hash: %v", err)
-	}
-
-	fileHash := fmt.Sprintf("%x", hasher.Sum(nil))
-
-	// For now, we'll just compare the provided signature with the file hash
-	// In a real implementation, you would use proper cryptographic signature verification
-	if signature != fileHash {
-		return fmt.Errorf("signature verification failed")
-	}
-
-	return nil
-}
-
 // createBackup creates a backup of current binaries
 func (um *UpdateManager) createBackup() (string, error) {
 	timestamp := time.Now().Format("20060102-150405")
@@ -235,6 +262,7 @@ func (um *UpdateManager) createBackup() (string, error) {
 
 	// Backup binaries
 	binaries := []string{
+		"/usr/local/bin/pulseup-agent",
 		"/usr/local/bin/pulseup-supervisor",
 		"/usr/local/bin/pulseup-worker",
 	}
@@ -272,6 +300,7 @@ func (um *UpdateManager) installUpdate(updateFilePath string) error {
 
 	// Install binaries
 	binaries := map[string]string{
+		"pulseup-agent":      "/usr/local/bin/pulseup-agent",
 		"pulseup-supervisor": "/usr/local/bin/pulseup-supervisor",
 		"pulseup-worker":     "/usr/local/bin/pulseup-worker",
 	}
@@ -296,6 +325,7 @@ func (um *UpdateManager) installUpdate(updateFilePath string) error {
 // restoreFromBackup restores binaries from backup
 func (um *UpdateManager) restoreFromBackup(backupDir string) error {
 	binaries := map[string]string{
+		"pulseup-agent":      "/usr/local/bin/pulseup-agent",
 		"pulseup-supervisor": "/usr/local/bin/pulseup-supervisor",
 		"pulseup-worker":     "/usr/local/bin/pulseup-worker",
 	}

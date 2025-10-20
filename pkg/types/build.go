@@ -15,6 +15,7 @@ const (
 type BuildConfig struct {
 	Name         string            `json:"name"`
 	SourcePath   string            `json:"source_path"`
+	BaseDir      string            `json:"base_dir"`
 	BuildType    BuildType         `json:"build_type"`
 	Environment  map[string]string `json:"environment,omitempty"`
 	StartCommand string            `json:"start_command,omitempty"`

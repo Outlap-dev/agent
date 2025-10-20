@@ -79,8 +79,6 @@ func main() {
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM, syscall.SIGQUIT)
 
-	mainLogger.Info("Worker ready, starting services")
-
 	// Start worker services
 	serviceErrChan := make(chan error, 1)
 	go func() {
@@ -108,12 +106,12 @@ func main() {
 	shutdownComplete := make(chan struct{})
 	go func() {
 		defer close(shutdownComplete)
-		
+
 		// Stop worker services
 		if err := workerContainer.Shutdown(shutdownCtx); err != nil {
 			mainLogger.Error("Error during worker shutdown", "error", err)
 		}
-		
+
 		// Disconnect from supervisor
 		if err := ipcClient.Disconnect(); err != nil {
 			mainLogger.Error("Error disconnecting from supervisor", "error", err)

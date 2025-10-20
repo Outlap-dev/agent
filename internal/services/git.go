@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/go-git/go-git/v5"
+	"github.com/go-git/go-git/v5/config"
 	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/transport/http"
 
@@ -371,6 +372,7 @@ func (g *GitServiceImpl) CheckoutBranch(ctx context.Context, repoPath, branch st
 
 	checkoutOptions := &git.CheckoutOptions{
 		Branch: branchRef,
+		Force:  true,
 	}
 
 	// If branch doesn't exist locally, try to create it from remote
@@ -389,7 +391,49 @@ func (g *GitServiceImpl) CheckoutBranch(ctx context.Context, repoPath, branch st
 		return fmt.Errorf("failed to checkout branch '%s': %w", branch, err)
 	}
 
+	if resetErr := g.hardResetBranch(repo, branch); resetErr != nil {
+		g.logger.Debug("Branch checkout completed without reset", "branch", branch, "error", resetErr)
+	}
+
 	g.logger.Info("Successfully checked out branch", "branch", branch)
+	return nil
+}
+
+func (g *GitServiceImpl) hardResetBranch(repo *git.Repository, branch string) error {
+	if repo == nil {
+		return fmt.Errorf("repository is nil")
+	}
+
+	if branch == "" {
+		head, err := repo.Head()
+		if err != nil {
+			return fmt.Errorf("failed to resolve current HEAD: %w", err)
+		}
+		if !head.Name().IsBranch() {
+			return fmt.Errorf("HEAD is detached; cannot determine branch for reset")
+		}
+		branch = head.Name().Short()
+	}
+
+	workTree, err := repo.Worktree()
+	if err != nil {
+		return fmt.Errorf("failed to get worktree: %w", err)
+	}
+
+	remoteRef := plumbing.NewRemoteReferenceName("origin", branch)
+	ref, err := repo.Reference(remoteRef, true)
+	if err != nil {
+		return fmt.Errorf("failed to locate remote branch '%s': %w", branch, err)
+	}
+
+	if err := workTree.Reset(&git.ResetOptions{
+		Mode:   git.HardReset,
+		Commit: ref.Hash(),
+	}); err != nil {
+		return fmt.Errorf("failed to reset branch '%s' to remote commit: %w", branch, err)
+	}
+
+	g.logger.Debug("Hard reset branch to remote head", "branch", branch, "commit", ref.Hash().String())
 	return nil
 }
 
@@ -481,12 +525,26 @@ func (g *GitServiceImpl) PullGitHubRepoDirectly(ctx context.Context, clonePath, 
 		}, nil
 	}
 
-	workTree, err := repo.Worktree()
-	if err != nil {
-		return &types.CloneResult{
-			Success: false,
-			Error:   fmt.Sprintf("failed to get worktree: %v", err),
-		}, nil
+	auth := &http.BasicAuth{
+		Username: "oauth2",
+		Password: accessToken,
+	}
+
+	fetchOptions := &git.FetchOptions{
+		RemoteName: "origin",
+		Force:      true,
+		Auth:       auth,
+	}
+
+	if branch != "" {
+		refSpec := config.RefSpec(fmt.Sprintf("+refs/heads/%[1]s:refs/remotes/origin/%[1]s", branch))
+		fetchOptions.RefSpecs = []config.RefSpec{refSpec}
+	} else {
+		fetchOptions.RefSpecs = []config.RefSpec{config.RefSpec("+refs/heads/*:refs/remotes/origin/*")}
+	}
+
+	if err := repo.FetchContext(ctx, fetchOptions); err != nil && err != git.NoErrAlreadyUpToDate {
+		g.logger.Warn("Failed to fetch remote updates before pull", "error", err)
 	}
 
 	// If branch is specified, checkout the branch first
@@ -495,15 +553,29 @@ func (g *GitServiceImpl) PullGitHubRepoDirectly(ctx context.Context, clonePath, 
 			g.logger.Warn("Failed to checkout branch before pull", "branch", branch, "error", err)
 			// Continue with pull even if checkout fails
 		}
+
+		// Re-open repo to ensure we operate on the updated HEAD
+		repo, err = git.PlainOpen(clonePath)
+		if err != nil {
+			return &types.CloneResult{
+				Success: false,
+				Error:   fmt.Sprintf("failed to reopen repository after checkout: %v", err),
+			}, nil
+		}
+	}
+
+	workTree, err := repo.Worktree()
+	if err != nil {
+		return &types.CloneResult{
+			Success: false,
+			Error:   fmt.Sprintf("failed to get worktree: %v", err),
+		}, nil
 	}
 
 	// Pull with authentication
 	pullOptions := &git.PullOptions{
 		RemoteName: "origin",
-		Auth: &http.BasicAuth{
-			Username: "oauth2",
-			Password: accessToken,
-		},
+		Auth:       auth,
 	}
 
 	// If specific branch is requested, pull that branch
@@ -511,24 +583,33 @@ func (g *GitServiceImpl) PullGitHubRepoDirectly(ctx context.Context, clonePath, 
 		pullOptions.ReferenceName = plumbing.ReferenceName(fmt.Sprintf("refs/heads/%s", branch))
 	}
 
-	err = workTree.PullContext(ctx, pullOptions)
-
-	if err != nil && err != git.NoErrAlreadyUpToDate {
-		g.logger.Warn("Pull failed, falling back to basic pull", "error", err)
-		// Fallback to basic pull without auth (in case the existing repo doesn't need it)
-		err = g.PullLatest(ctx, clonePath)
-		if err != nil {
-			return &types.CloneResult{
-				Success: false,
-				Error:   fmt.Sprintf("failed to pull: %v", err),
-			}, nil
+	pullErr := workTree.PullContext(ctx, pullOptions)
+	targetBranch := branch
+	if targetBranch == "" {
+		if head, headErr := repo.Head(); headErr == nil && head.Name().IsBranch() {
+			targetBranch = head.Name().Short()
 		}
 	}
 
-	if err == git.NoErrAlreadyUpToDate {
-		g.logger.Info("Repository is already up to date", "branch", branch)
+	if pullErr != nil && pullErr != git.NoErrAlreadyUpToDate {
+		g.logger.Warn("Pull failed, forcing hard reset to remote head", "branch", targetBranch, "error", pullErr)
+		if resetErr := g.hardResetBranch(repo, targetBranch); resetErr != nil {
+			return &types.CloneResult{
+				Success: false,
+				Error:   fmt.Sprintf("failed to sync branch '%s' after pull error: %v", targetBranch, resetErr),
+			}, nil
+		}
+		g.logger.Info("Recovered by hard resetting branch to remote head", "branch", targetBranch)
+	} else if pullErr == git.NoErrAlreadyUpToDate {
+		g.logger.Info("Repository is already up to date", "branch", targetBranch)
 	} else {
-		g.logger.Info("Successfully pulled latest changes", "branch", branch)
+		// Successful pull
+		g.logger.Info("Successfully pulled latest changes", "branch", targetBranch)
+	}
+
+	// Ensure final state matches remote head to avoid lingering local commits
+	if resetErr := g.hardResetBranch(repo, targetBranch); resetErr != nil {
+		g.logger.Warn("Failed to perform final hard reset after pull", "branch", targetBranch, "error", resetErr)
 	}
 
 	return &types.CloneResult{

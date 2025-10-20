@@ -1,403 +1,115 @@
 package services
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
-	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
 
-	wscontracts "pulseup-agent-go/pkg/contracts/websocket"
 	"pulseup-agent-go/pkg/logger"
 	"pulseup-agent-go/pkg/types"
 )
 
-// NixpacksServiceImpl handles Nixpacks operations for building applications
+const (
+	nixpacksBinary             = "nixpacks"
+	defaultNixpacksNodeVersion = "22"
+)
+
+// NixpacksServiceImpl provides operations for building and deploying applications with Nixpacks.
 type NixpacksServiceImpl struct {
 	logger        *logger.Logger
-	logsDir       string
-	wsManager     wscontracts.Emitter
+	wsManager     WebSocketManager
+	logManager    *deploymentLogManager
 	containerBase *containerDeploymentBase
 }
 
-const (
-	deploymentStepInitialize  = "initialize"
-	deploymentStepBuildImage  = "build_image"
-	deploymentStepDeployImage = "deploy_container"
-)
-
-// NewNixpacksService creates a new Nixpacks service
-func NewNixpacksService(logger *logger.Logger, wsManager wscontracts.Emitter, deploymentService DeploymentService) *NixpacksServiceImpl {
-	logsDir := "/var/log/pulseup/deployments"
-
-	// Check if we're in debug mode
-	if os.Getenv("DEBUG") == "true" {
-		if debugDir := os.Getenv("DEBUG_LOG_DIR"); debugDir != "" {
-			logsDir = filepath.Join(debugDir, "deployments")
-		}
+// NewNixpacksService wires a Nixpacks service implementation.
+func NewNixpacksService(baseLogger *logger.Logger, wsManager WebSocketManager, deploymentService DeploymentService) *NixpacksServiceImpl {
+	serviceLogger := baseLogger
+	if serviceLogger == nil {
+		serviceLogger = logger.New()
 	}
-
-	os.MkdirAll(logsDir, 0755)
-
-	serviceLogger := logger.With("service", "nixpacks")
+	serviceLogger = serviceLogger.With("service", "nixpacks")
 
 	return &NixpacksServiceImpl{
 		logger:        serviceLogger,
-		logsDir:       logsDir,
 		wsManager:     wsManager,
+		logManager:    newDeploymentLogManager(serviceLogger),
 		containerBase: newContainerDeploymentBase(serviceLogger, deploymentService),
 	}
 }
 
-func (n *NixpacksServiceImpl) buildLogPaths(serviceUID, deploymentUID, logType string) []string {
-	if logType == "" {
-		return nil
-	}
-
-	paths := make([]string, 0, 2)
-	if deploymentUID != "" {
-		paths = append(paths, filepath.Join(n.logsDir, fmt.Sprintf("%s_%s.log", deploymentUID, logType)))
-	}
-	if serviceUID != "" {
-		paths = append(paths, filepath.Join(n.logsDir, fmt.Sprintf("%s_%s.log", serviceUID, logType)))
-	}
-
-	return paths
-}
-
-func (n *NixpacksServiceImpl) initializeLogFiles(serviceUID, deploymentUID, logType string, command []string) []*os.File {
-	paths := n.buildLogPaths(serviceUID, deploymentUID, logType)
-	if len(paths) == 0 {
-		return nil
-	}
-
-	entry := fmt.Sprintf("%s - INFO - Starting command: %s\n", time.Now().Format(time.RFC3339), strings.Join(command, " "))
-	files := make([]*os.File, 0, len(paths))
-
-	for _, path := range paths {
-		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-			n.logger.Warn("Failed to create log directory", "path", path, "error", err)
-			continue
-		}
-		file, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
-		if err != nil {
-			n.logger.Warn("Failed to create log file", "path", path, "error", err)
-			continue
-		}
-		if _, err := file.WriteString(entry); err != nil {
-			n.logger.Warn("Failed to write initial log entry", "path", path, "error", err)
-		}
-		files = append(files, file)
-	}
-
-	return files
-}
-
-func (n *NixpacksServiceImpl) appendLogEntry(serviceUID, deploymentUID, logType, level, message string) {
-	paths := n.buildLogPaths(serviceUID, deploymentUID, logType)
-	if len(paths) == 0 {
-		return
-	}
-
-	entry := fmt.Sprintf("%s - %s - %s\n", time.Now().Format(time.RFC3339), level, message)
-
-	for _, path := range paths {
-		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-			n.logger.Warn("Failed to create log directory", "path", path, "error", err)
-			continue
-		}
-		file, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
-		if err != nil {
-			n.logger.Warn("Failed to append to log file", "path", path, "error", err)
-			continue
-		}
-		if _, err := file.WriteString(entry); err != nil {
-			n.logger.Warn("Failed to write log entry", "path", path, "error", err)
-		}
-		_ = file.Close()
-	}
-}
-
-func (n *NixpacksServiceImpl) appendDeploymentLog(serviceUID, deploymentUID, level, message string) {
-	n.appendLogEntry(serviceUID, deploymentUID, "deploy", level, message)
-}
-
-// IsInstalled checks if Nixpacks is installed on the system
+// IsInstalled checks if the nixpacks binary is available on the host.
 func (n *NixpacksServiceImpl) IsInstalled() bool {
-	_, err := exec.LookPath("nixpacks")
+	_, err := exec.LookPath(nixpacksBinary)
 	return err == nil
 }
 
-// BuildImage builds a container image using Nixpacks
-func (n *NixpacksServiceImpl) BuildImage(ctx context.Context, sourcePath, serviceUID, deploymentUID string) (*types.BuildResult, error) {
+// BuildImage executes `nixpacks build` for the given source path.
+func (n *NixpacksServiceImpl) BuildImage(ctx context.Context, sourcePath, serviceUID, deploymentUID string) (*CommandResult, error) {
 	if !n.IsInstalled() {
 		return nil, fmt.Errorf("nixpacks is not installed")
 	}
 
+	workDir := cleanSourcePath(sourcePath)
 	imageName := fmt.Sprintf("pulseup-app:%s", serviceUID)
 	if n.containerBase != nil {
 		imageName = n.containerBase.imageNameForService(serviceUID)
 	}
-	buildCommand := []string{"nixpacks", "build", ".", "--name", imageName}
 
-	n.logger.Info("Starting Nixpacks build",
-		"service_uid", serviceUID,
-		"deployment_uid", deploymentUID,
-		"image_name", imageName,
-		"command", strings.Join(buildCommand, " "),
-		"working_directory", sourcePath)
-
-	result, err := n.runCommand(ctx, buildCommand, sourcePath, deploymentUID, serviceUID, "build")
+	command := []string{nixpacksBinary, "build", ".", "--name", imageName}
+	result, err := n.logManager.RunCommand(ctx, command, workDir, deploymentUID, serviceUID, "build", nil)
 	if err != nil {
-		return &types.BuildResult{
-			Success:   false,
-			Error:     err.Error(),
-			ImageName: imageName,
-		}, nil
+		return nil, err
 	}
 
 	if result.ExitCode != 0 {
-		errorMsg := fmt.Sprintf("Nixpacks build failed with exit code %d: %s", result.ExitCode, result.Stderr)
-		n.logger.Error("Build failed", "error", errorMsg)
-		return &types.BuildResult{
-			Success:   false,
-			Error:     errorMsg,
-			ImageName: imageName,
-		}, nil
-	}
-
-	n.logger.Info("Nixpacks build completed successfully", "image_name", imageName)
-	return &types.BuildResult{
-		Success:   true,
-		ImageName: imageName,
-		BuildLogs: result.Stdout,
-	}, nil
-}
-
-// GetSuggestedConfig gets the suggested Nixpacks configuration for a source path
-func (n *NixpacksServiceImpl) GetSuggestedConfig(ctx context.Context, sourcePath string) (*types.NixpacksPlan, error) {
-	if !n.IsInstalled() {
-		return nil, fmt.Errorf("nixpacks is not installed")
-	}
-
-	planCommand := []string{"nixpacks", "plan", "."}
-
-	result, err := n.runCommand(ctx, planCommand, sourcePath, "", "", "")
-	if err != nil {
-		return nil, fmt.Errorf("failed to get nixpacks plan: %w", err)
-	}
-
-	if result.ExitCode != 0 {
-		return nil, fmt.Errorf("nixpacks plan failed with exit code %d: %s", result.ExitCode, result.Stderr)
-	}
-
-	// Clean and parse the JSON output
-	cleanedOutput := strings.TrimSpace(result.Stdout)
-	if strings.HasPrefix(cleanedOutput, "\xef\xbb\xbf") { // Remove UTF-8 BOM
-		cleanedOutput = cleanedOutput[3:]
-	}
-
-	var plan types.NixpacksPlan
-	if err := json.Unmarshal([]byte(cleanedOutput), &plan); err != nil {
-		return nil, fmt.Errorf("failed to parse nixpacks plan: %w", err)
-	}
-
-	return &plan, nil
-}
-
-// GeneratePlan generates a Nixpacks plan for the given source path (alias for GetSuggestedConfig)
-func (n *NixpacksServiceImpl) GeneratePlan(ctx context.Context, sourcePath string) (*types.NixpacksPlan, error) {
-	return n.GetSuggestedConfig(ctx, sourcePath)
-}
-
-// CommandResult represents the result of a command execution
-type CommandResult struct {
-	Stdout   string
-	Stderr   string
-	ExitCode int
-}
-
-// runCommand executes a command and captures its output with logging
-func (n *NixpacksServiceImpl) runCommand(ctx context.Context, command []string, workDir, deploymentUID, serviceUID, logType string) (*CommandResult, error) {
-	cmd := exec.CommandContext(ctx, command[0], command[1:]...)
-	cmd.Dir = workDir
-
-	// Set HOME to pulseup-worker if running under that user context to prevent attempts to read /root/.docker
-	baseEnv := os.Environ()
-	if os.Geteuid() != 0 {
-		// Non-root user; ensure HOME points to its home directory if not already set
-		hasHome := false
-		for _, e := range baseEnv {
-			if strings.HasPrefix(e, "HOME=") {
-				hasHome = true
-				break
-			}
-		}
-		if !hasHome {
-			if homeDir, err := os.UserHomeDir(); err == nil {
-				baseEnv = append(baseEnv, fmt.Sprintf("HOME=%s", homeDir))
-			}
-		}
-	}
-
-	// Allow opting out of BuildKit disabling; only force legacy mode if DOCKER_FORCE_LEGACY_BUILDS=1
-	if os.Getenv("DOCKER_FORCE_LEGACY_BUILDS") == "1" {
-		baseEnv = append(baseEnv,
-			"DOCKER_BUILDKIT=0",
-			"COMPOSE_DOCKER_CLI_BUILD=0",
-			"DOCKER_CLI_EXPERIMENTAL=disabled",
-		)
-	}
-	cmd.Env = baseEnv
-
-	// Log the exact command & working directory for troubleshooting
-	n.logger.Info("Executing build command",
-		"work_dir", workDir,
-		"command", strings.Join(command, " "))
-	if os.Getenv("DEBUG") == "true" {
-		for _, e := range cmd.Env {
-			if strings.HasPrefix(e, "DOCKER_") || strings.HasPrefix(e, "COMPOSE_") {
-				n.logger.Debug("env", "var", e)
-			}
-		}
-	}
-
-	logFiles := n.initializeLogFiles(serviceUID, deploymentUID, logType, command)
-	if len(logFiles) > 0 {
-		defer func() {
-			for _, file := range logFiles {
-				if file != nil {
-					_ = file.Close()
-				}
-			}
-		}()
-	}
-
-	// Create pipes for stdout and stderr
-	stdoutPipe, err := cmd.StdoutPipe()
-	if err != nil {
-		return nil, fmt.Errorf("failed to create stdout pipe: %w", err)
-	}
-
-	stderrPipe, err := cmd.StderrPipe()
-	if err != nil {
-		return nil, fmt.Errorf("failed to create stderr pipe: %w", err)
-	}
-
-	// Start the command
-	if err := cmd.Start(); err != nil {
-		return nil, fmt.Errorf("failed to start command: %w", err)
-	}
-
-	// Read output streams concurrently
-	stdoutChan := make(chan string, 1)
-	stderrChan := make(chan string, 1)
-
-	go n.readStream(stdoutPipe, "stdout", logFiles, false, stdoutChan)
-	go n.readStream(stderrPipe, "stderr", logFiles, true, stderrChan)
-
-	// Wait for command to complete
-	err = cmd.Wait()
-
-	// Get the output
-	stdout := <-stdoutChan
-	stderr := <-stderrChan
-
-	exitCode := 0
-	if err != nil {
-		if exitError, ok := err.(*exec.ExitError); ok {
-			exitCode = exitError.ExitCode()
-		} else {
-			return nil, fmt.Errorf("command execution failed: %w", err)
-		}
-	}
-
-	result := &CommandResult{
-		Stdout:   stdout,
-		Stderr:   stderr,
-		ExitCode: exitCode,
-	}
-
-	if logType != "" {
-		level := "INFO"
-		message := "Command completed successfully"
-		if exitCode != 0 {
-			level = "ERROR"
-			message = fmt.Sprintf("Command exited with code %d", exitCode)
-		}
-		n.appendLogEntry(serviceUID, deploymentUID, logType, level, message)
+		return result, fmt.Errorf("nixpacks build failed with exit code %d", result.ExitCode)
 	}
 
 	return result, nil
 }
 
-// readStream reads from a stream and logs the output
-func (n *NixpacksServiceImpl) readStream(reader io.Reader, streamName string, logFiles []*os.File, isStderr bool, output chan<- string) {
-	var lines []string
-	scanner := bufio.NewScanner(reader)
+// GeneratePlan runs `nixpacks plan` and parses the resulting JSON output.
+func (n *NixpacksServiceImpl) GeneratePlan(ctx context.Context, sourcePath string) (*types.NixpacksPlan, error) {
+	if !n.IsInstalled() {
+		return nil, fmt.Errorf("nixpacks is not installed")
+	}
 
-	for scanner.Scan() {
-		line := scanner.Text()
-		if line != "" {
-			lines = append(lines, line)
-			timestamp := time.Now().Format(time.RFC3339)
+	workDir := cleanSourcePath(sourcePath)
 
-			logLevel := "INFO"
-			if isStderr {
-				// Check if it's Docker build progress (not an error)
-				isDockerProgress := strings.Contains(line, "#") ||
-					strings.Contains(line, "building with") ||
-					(strings.Contains(line, "DONE") && !strings.Contains(line, "ERROR")) ||
-					strings.Contains(line, "transferring") ||
-					strings.Contains(line, "load build definition") ||
-					strings.Contains(line, "exporting layers") ||
-					strings.Contains(line, "writing image")
+	cmd := exec.CommandContext(ctx, nixpacksBinary, "plan", ".", "--format", "json")
+	cmd.Dir = workDir
 
-				if !isDockerProgress {
-					logLevel = "ERROR"
-					n.logger.Error("Build stderr", "line", line)
-				} else {
-					n.logger.Debug("Build progress", "line", line)
-				}
-			} else {
-				n.logger.Debug("Build stdout", "line", line)
+	output, err := cmd.Output()
+	if err != nil {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
+			stderr := strings.TrimSpace(string(exitErr.Stderr))
+			if stderr == "" {
+				stderr = exitErr.Error()
 			}
-
-			// Write to log files
-			for _, file := range logFiles {
-				if file != nil {
-					file.WriteString(fmt.Sprintf("%s - %s - %s\n", timestamp, logLevel, line))
-				}
-			}
+			return nil, fmt.Errorf("failed to generate nixpacks plan: %s", stderr)
 		}
+		return nil, fmt.Errorf("failed to run nixpacks plan: %w", err)
 	}
 
-	output <- strings.Join(lines, "\n")
+	var plan types.NixpacksPlan
+	if err := json.Unmarshal(output, &plan); err != nil {
+		return nil, fmt.Errorf("failed to parse nixpacks plan output: %w", err)
+	}
+
+	return &plan, nil
 }
 
-// UpdateStatus sends status updates via WebSocket
-func (n *NixpacksServiceImpl) UpdateStatus(serviceUID, status, message string) error {
-	if n.wsManager == nil {
-		n.logger.Warn("WebSocket manager not available for status update")
-		return nil
-	}
-
-	statusUpdate := map[string]interface{}{
-		"service_uid": serviceUID,
-		"status":      status,
-		"message":     message,
-		"timestamp":   time.Now().Unix(),
-	}
-
-	return n.wsManager.Emit("service_status_update", statusUpdate)
-}
-
-// Deploy deploys an application using Nixpacks with the given plan configuration
+// Deploy executes the Nixpacks build and orchestrates container deployment.
 func (n *NixpacksServiceImpl) Deploy(ctx context.Context, deploymentUID, sourcePath, serviceUID string, planData map[string]interface{}, networks []string) (*types.DeploymentResult, error) {
 	stepTemplates := []types.DeploymentStep{
 		{
@@ -423,7 +135,7 @@ func (n *NixpacksServiceImpl) Deploy(ctx context.Context, deploymentUID, sourceP
 		},
 	}
 
-	stepTracker := newDeploymentStepTracker(n.logger, n.logsDir, serviceUID, deploymentUID, stepTemplates...)
+	stepTracker := n.logManager.NewStepTracker(serviceUID, deploymentUID, stepTemplates...)
 
 	if stepTracker != nil {
 		stepTracker.StartStep(deploymentStepInitialize, "Prepare deployment", "Validating environment and plan", "deploy")
@@ -440,17 +152,20 @@ func (n *NixpacksServiceImpl) Deploy(ctx context.Context, deploymentUID, sourceP
 		}, nil
 	}
 
+	workDir := cleanSourcePath(sourcePath)
+
 	n.logger.Info("Starting Nixpacks deployment",
 		"service_uid", serviceUID,
 		"deployment_uid", deploymentUID,
-		"source_path", sourcePath)
+		"source_path", workDir)
 
-	n.appendDeploymentLog(serviceUID, deploymentUID, "INFO", "Starting Nixpacks deployment")
+	planData = n.mergeDetectedPlanData(ctx, workDir, planData)
+
+	n.logManager.AppendDeploymentLog(serviceUID, deploymentUID, "INFO", "Starting Nixpacks deployment")
 	if stepTracker != nil {
 		stepTracker.AppendLog(deploymentStepInitialize, "INFO", "Starting Nixpacks deployment")
 	}
 
-	// Update deployment status to in progress
 	if err := n.updateDeploymentStatus(deploymentUID, types.DeploymentStatusInProgress, "Starting Nixpacks deployment"); err != nil {
 		n.logger.Warn("Failed to update deployment status", "error", err)
 		if stepTracker != nil {
@@ -458,53 +173,67 @@ func (n *NixpacksServiceImpl) Deploy(ctx context.Context, deploymentUID, sourceP
 		}
 	}
 
-	// Extract start command from plan data
-	startCmd, err := n.extractStartCommand(planData)
-	if err != nil {
-		errorMsg := fmt.Sprintf("No start command found in Nixpacks plan: %v", err)
-		n.logger.Error(errorMsg)
-		if updateErr := n.updateDeploymentStatus(deploymentUID, types.DeploymentStatusFailed, errorMsg); updateErr != nil {
-			n.logger.Warn("Failed to update deployment status", "error", updateErr)
-		}
-		if stepTracker != nil {
-			stepTracker.FailStep(deploymentStepInitialize, errorMsg)
-		}
-		return &types.DeploymentResult{
-			Success: false,
-			Error:   errorMsg,
-		}, nil
-	}
-
-	if stepTracker != nil {
-		stepTracker.AppendLog(deploymentStepInitialize, "INFO", fmt.Sprintf("Resolved start command: %s", startCmd))
-	}
-
 	imageName := fmt.Sprintf("pulseup-app:%s", serviceUID)
 	if n.containerBase != nil {
 		imageName = n.containerBase.imageNameForService(serviceUID)
 	}
 
-	// We pass arguments directly (no shell), so don't escape quotes.
-	buildCommand := []string{"nixpacks", "build", ".", "--name", imageName, "--start-cmd", startCmd}
-	if os.Getenv("DEBUG") == "true" { // add verbose output to aid troubleshooting
+	buildCommand := n.buildCommand(planData, imageName)
+	if os.Getenv("DEBUG") == "true" {
 		buildCommand = append(buildCommand, "--verbose")
+	}
+
+	envVars, runtimeNotes := n.extractEnvVars(planData)
+
+	if extraNotes, err := n.ensureNodeRuntimeOverrides(planData, envVars); err != nil {
+		n.logger.Warn("Failed to enforce Node runtime overrides", "error", err)
+		n.logManager.AppendDeploymentLog(serviceUID, deploymentUID, "WARN", fmt.Sprintf("Failed to enforce Node runtime overrides: %v", err))
+		if stepTracker != nil {
+			stepTracker.AppendLog(deploymentStepInitialize, "WARN", fmt.Sprintf("Failed to enforce Node runtime overrides: %v", err))
+		}
+	} else if len(extraNotes) > 0 {
+		runtimeNotes = append(runtimeNotes, extraNotes...)
+	}
+
+	if len(envVars) > 0 {
+		keys := make([]string, 0, len(envVars))
+		for key := range envVars {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+		for _, key := range keys {
+			value := strings.TrimSpace(envVars[key])
+			if value == "" {
+				continue
+			}
+			buildCommand = append(buildCommand, "--env", fmt.Sprintf("%s=%s", key, value))
+		}
+	}
+
+	if len(runtimeNotes) > 0 {
+		note := fmt.Sprintf("Applied runtime guardrails: %s", strings.Join(runtimeNotes, ", "))
+		n.logger.Info(note,
+			"service_uid", serviceUID,
+			"deployment_uid", deploymentUID)
+		n.logManager.AppendDeploymentLog(serviceUID, deploymentUID, "INFO", note)
+		if stepTracker != nil {
+			stepTracker.AppendLog(deploymentStepInitialize, "INFO", note)
+		}
 	}
 
 	n.logger.Info("Running Nixpacks build",
 		"service_uid", serviceUID,
 		"deployment_uid", deploymentUID,
 		"image_name", imageName,
-		"start_cmd", startCmd,
 		"command", strings.Join(buildCommand, " "))
 
-	n.appendDeploymentLog(serviceUID, deploymentUID, "INFO", "Building container image with Nixpacks")
+	n.logManager.AppendDeploymentLog(serviceUID, deploymentUID, "INFO", "Building container image with Nixpacks")
 	if stepTracker != nil {
 		stepTracker.CompleteStep(deploymentStepInitialize)
 		stepTracker.StartStep(deploymentStepBuildImage, "Build container image", "Running Nixpacks build", "build")
 		stepTracker.AppendLog(deploymentStepBuildImage, "INFO", "Executing nixpacks build command")
 	}
 
-	// Update status to building
 	if err := n.updateDeploymentStatus(deploymentUID, types.DeploymentStatusInProgress, "Building container image"); err != nil {
 		n.logger.Warn("Failed to update deployment status", "error", err)
 		if stepTracker != nil {
@@ -512,12 +241,11 @@ func (n *NixpacksServiceImpl) Deploy(ctx context.Context, deploymentUID, sourceP
 		}
 	}
 
-	// Build the image
-	result, err := n.runCommand(ctx, buildCommand, sourcePath, deploymentUID, serviceUID, "build")
+	result, err := n.logManager.RunCommand(ctx, buildCommand, workDir, deploymentUID, serviceUID, "build", nil)
 	if err != nil {
 		errorMsg := fmt.Sprintf("Failed to execute nixpacks build: %v", err)
 		n.logger.Error(errorMsg)
-		n.appendDeploymentLog(serviceUID, deploymentUID, "ERROR", errorMsg)
+		n.logManager.AppendDeploymentLog(serviceUID, deploymentUID, "ERROR", errorMsg)
 		if stepTracker != nil {
 			stepTracker.FailStep(deploymentStepBuildImage, errorMsg)
 		}
@@ -533,7 +261,7 @@ func (n *NixpacksServiceImpl) Deploy(ctx context.Context, deploymentUID, sourceP
 	if result.ExitCode != 0 {
 		errorMsg := fmt.Sprintf("Nixpacks build failed during deployment for %s. Code: %d. Stderr: %s", serviceUID, result.ExitCode, result.Stderr)
 		n.logger.Error(errorMsg)
-		n.appendDeploymentLog(serviceUID, deploymentUID, "ERROR", errorMsg)
+		n.logManager.AppendDeploymentLog(serviceUID, deploymentUID, "ERROR", errorMsg)
 		if stepTracker != nil {
 			stepTracker.FailStep(deploymentStepBuildImage, errorMsg)
 		}
@@ -546,20 +274,16 @@ func (n *NixpacksServiceImpl) Deploy(ctx context.Context, deploymentUID, sourceP
 		}, nil
 	}
 
-	n.appendDeploymentLog(serviceUID, deploymentUID, "INFO", "Image build completed successfully")
+	n.logManager.AppendDeploymentLog(serviceUID, deploymentUID, "INFO", "Image build completed successfully")
 	if stepTracker != nil {
 		stepTracker.AppendLog(deploymentStepBuildImage, "INFO", "Image build completed successfully")
 		stepTracker.CompleteStep(deploymentStepBuildImage)
 	}
 
-	// Extract environment variables from plan
-	envVars := n.extractEnvVars(planData)
-
 	if stepTracker != nil {
 		stepTracker.StartStep(deploymentStepDeployImage, "Deploy container", "Starting application container", "deploy")
 	}
 
-	// Update status to deploying
 	if err := n.updateDeploymentStatus(deploymentUID, types.DeploymentStatusInProgress, "Deploying container"); err != nil {
 		n.logger.Warn("Failed to update deployment status", "error", err)
 		if stepTracker != nil {
@@ -567,16 +291,16 @@ func (n *NixpacksServiceImpl) Deploy(ctx context.Context, deploymentUID, sourceP
 		}
 	}
 
-	// Deploy the container (this would need to be implemented via a deployment service)
-	n.appendDeploymentLog(serviceUID, deploymentUID, "INFO", fmt.Sprintf("Deploying container image %s", imageName))
+	n.logManager.AppendDeploymentLog(serviceUID, deploymentUID, "INFO", fmt.Sprintf("Deploying container image %s", imageName))
 	if stepTracker != nil {
 		stepTracker.AppendLog(deploymentStepDeployImage, "INFO", fmt.Sprintf("Deploying container image %s", imageName))
 	}
+
 	deploymentResult, err := n.deployContainer(ctx, serviceUID, imageName, deploymentUID, envVars, stepTracker)
 	if err != nil {
 		errorMsg := fmt.Sprintf("Failed to deploy container: %v", err)
 		n.logger.Error(errorMsg)
-		n.appendDeploymentLog(serviceUID, deploymentUID, "ERROR", errorMsg)
+		n.logManager.AppendDeploymentLog(serviceUID, deploymentUID, "ERROR", errorMsg)
 		if stepTracker != nil {
 			stepTracker.FailStep(deploymentStepDeployImage, errorMsg)
 		}
@@ -595,7 +319,7 @@ func (n *NixpacksServiceImpl) Deploy(ctx context.Context, deploymentUID, sourceP
 			errorMsg = "Unknown deployment error"
 		}
 		n.logger.Error("Deployment failed", "error", errorMsg)
-		n.appendDeploymentLog(serviceUID, deploymentUID, "ERROR", errorMsg)
+		n.logManager.AppendDeploymentLog(serviceUID, deploymentUID, "ERROR", errorMsg)
 		if stepTracker != nil {
 			stepTracker.FailStep(deploymentStepDeployImage, errorMsg)
 		}
@@ -605,7 +329,6 @@ func (n *NixpacksServiceImpl) Deploy(ctx context.Context, deploymentUID, sourceP
 		return deploymentResult, nil
 	}
 
-	// Update status to completed
 	statusMsg := fmt.Sprintf("Container ID: %s", deploymentResult.ContainerID)
 	if err := n.updateDeploymentStatus(deploymentUID, types.DeploymentStatusCompleted, statusMsg); err != nil {
 		n.logger.Warn("Failed to update deployment status", "error", err)
@@ -614,8 +337,8 @@ func (n *NixpacksServiceImpl) Deploy(ctx context.Context, deploymentUID, sourceP
 		}
 	}
 
-	n.appendLogEntry(serviceUID, deploymentUID, "build", "INFO", "Deployment process completed successfully")
-	n.appendDeploymentLog(serviceUID, deploymentUID, "INFO", fmt.Sprintf("Deployment completed successfully. Container ID: %s", deploymentResult.ContainerID))
+	n.logManager.AppendLogEntry(serviceUID, deploymentUID, "build", "INFO", "Deployment process completed successfully")
+	n.logManager.AppendDeploymentLog(serviceUID, deploymentUID, "INFO", fmt.Sprintf("Deployment completed successfully. Container ID: %s", deploymentResult.ContainerID))
 	if stepTracker != nil {
 		stepTracker.AppendLog(deploymentStepDeployImage, "INFO", fmt.Sprintf("Deployment completed successfully. Container ID: %s", deploymentResult.ContainerID))
 		stepTracker.CompleteStep(deploymentStepDeployImage)
@@ -629,54 +352,21 @@ func (n *NixpacksServiceImpl) Deploy(ctx context.Context, deploymentUID, sourceP
 	return deploymentResult, nil
 }
 
-// extractStartCommand extracts the start command from the Nixpacks plan data
-func (n *NixpacksServiceImpl) extractStartCommand(planData map[string]interface{}) (string, error) {
-	// Try to get start command from phases.start.cmd
-	if phases, ok := planData["phases"].(map[string]interface{}); ok {
-		if start, ok := phases["start"].(map[string]interface{}); ok {
-			if cmd, ok := start["cmd"].(string); ok && cmd != "" {
-				return cmd, nil
-			}
-		}
-	}
-
-	// Try to get start command from start.command or start.cmd
-	if start, ok := planData["start"].(map[string]interface{}); ok {
-		if command, ok := start["command"].(string); ok && command != "" {
-			return command, nil
-		}
-		if cmd, ok := start["cmd"].(string); ok && cmd != "" {
-			return cmd, nil
-		}
-	}
-
-	// Try to get start command directly from startCmd
-	if startCmd, ok := planData["startCmd"].(string); ok && startCmd != "" {
-		return startCmd, nil
-	}
-
-	return "", fmt.Errorf("no start command found in plan data")
-}
-
-// extractEnvVars extracts environment variables from the Nixpacks plan data
-func (n *NixpacksServiceImpl) extractEnvVars(planData map[string]interface{}) map[string]string {
+func (n *NixpacksServiceImpl) extractEnvVars(planData map[string]interface{}) (map[string]string, []string) {
 	envVars := make(map[string]string)
 
-	// Extract from variables field
 	if variables, ok := planData["variables"].(map[string]interface{}); ok {
 		for k, v := range variables {
 			envVars[k] = fmt.Sprintf("%v", v)
 		}
 	}
 
-	// Extract from env field
 	if env, ok := planData["env"].(map[string]interface{}); ok {
 		for k, v := range env {
 			envVars[k] = fmt.Sprintf("%v", v)
 		}
 	}
 
-	// Set PORT from plan if not already set
 	if _, exists := envVars["PORT"]; !exists {
 		if start, ok := planData["start"].(map[string]interface{}); ok {
 			if port, ok := start["port"]; ok {
@@ -688,10 +378,83 @@ func (n *NixpacksServiceImpl) extractEnvVars(planData map[string]interface{}) ma
 		}
 	}
 
-	return envVars
+	guardrailNotes := n.applyRuntimeGuardrails(planData, envVars)
+
+	return envVars, guardrailNotes
 }
 
-// deployContainer deploys the container using a deployment service
+func (n *NixpacksServiceImpl) ensureNodeRuntimeOverrides(planData map[string]interface{}, envVars map[string]string) ([]string, error) {
+	providers := extractProviders(planData)
+	needsNodeRuntime := false
+	for _, provider := range providers {
+		switch provider {
+		case "node", "nodejs", "bun":
+			needsNodeRuntime = true
+			break
+		}
+		if needsNodeRuntime {
+			break
+		}
+	}
+
+	if !needsNodeRuntime {
+		return nil, nil
+	}
+
+	desiredVersion := strings.TrimSpace(envVars["NIXPACKS_NODE_VERSION"])
+	if desiredVersion == "" {
+		desiredVersion = strings.TrimSpace(envVars["NODE_VERSION"])
+	}
+	if desiredVersion == "" {
+		desiredVersion = defaultNixpacksNodeVersion
+	}
+
+	envVars["NIXPACKS_NODE_VERSION"] = desiredVersion
+	envVars["NODE_VERSION"] = desiredVersion
+
+	notes := []string{fmt.Sprintf("NIXPACKS_NODE_VERSION → %s", desiredVersion)}
+
+	if _, exists := envVars["NIXPACKS_CONFIG_FILE"]; exists {
+		return notes, nil
+	}
+
+	configPath, descriptor, err := createNixpacksConfigFile(desiredVersion)
+	if err != nil {
+		return notes, err
+	}
+
+	envVars["NIXPACKS_CONFIG_FILE"] = configPath
+	notes = append(notes, fmt.Sprintf("Nixpacks packages → %s", descriptor))
+
+	return notes, nil
+}
+
+func createNixpacksConfigFile(nodeVersion string) (string, string, error) {
+	parsed := parseVersion(nodeVersion)
+	if parsed.Invalid || parsed.Major == 0 {
+		return "", "", fmt.Errorf("invalid Node version for Nixpacks config: %s", nodeVersion)
+	}
+
+	packageName := fmt.Sprintf("nodejs_%d", parsed.Major)
+	contents := fmt.Sprintf("[phases.setup]\nnixPkgs = [\"%s\",\"bun\"]\n", packageName)
+
+	tmpFile, err := os.CreateTemp("", "nixpacks-config-*.toml")
+	if err != nil {
+		return "", "", fmt.Errorf("failed to create temporary Nixpacks config: %w", err)
+	}
+	defer tmpFile.Close()
+
+	if _, err := tmpFile.WriteString(contents); err != nil {
+		return "", "", fmt.Errorf("failed to write Nixpacks config: %w", err)
+	}
+
+	if err := tmpFile.Sync(); err != nil {
+		return "", "", fmt.Errorf("failed to flush Nixpacks config: %w", err)
+	}
+
+	return tmpFile.Name(), fmt.Sprintf("%s,bun", packageName), nil
+}
+
 func (n *NixpacksServiceImpl) deployContainer(ctx context.Context, serviceUID, imageName, deploymentUID string, envVars map[string]string, recorder types.DeploymentStepRecorder) (*types.DeploymentResult, error) {
 	if n.containerBase == nil {
 		return nil, fmt.Errorf("deployment service not available")
@@ -700,7 +463,6 @@ func (n *NixpacksServiceImpl) deployContainer(ctx context.Context, serviceUID, i
 	return n.containerBase.deployBuiltImage(ctx, serviceUID, imageName, deploymentUID, envVars, recorder, deploymentStepDeployImage)
 }
 
-// updateDeploymentStatus updates the deployment status via WebSocket
 func (n *NixpacksServiceImpl) updateDeploymentStatus(deploymentUID string, status types.DeploymentStatus, message string) error {
 	if n.wsManager == nil {
 		return fmt.Errorf("WebSocket manager not available")
@@ -714,4 +476,444 @@ func (n *NixpacksServiceImpl) updateDeploymentStatus(deploymentUID string, statu
 	}
 
 	return n.wsManager.Emit("update_deployment_status", statusUpdate)
+}
+
+func cleanSourcePath(path string) string {
+	trimmed := strings.TrimSpace(path)
+	if trimmed == "" {
+		return "."
+	}
+	if strings.HasPrefix(trimmed, "~") {
+		if home, err := os.UserHomeDir(); err == nil {
+			return filepath.Join(home, strings.TrimPrefix(trimmed, "~"))
+		}
+	}
+	return filepath.Clean(trimmed)
+}
+
+func (n *NixpacksServiceImpl) buildCommand(planData map[string]interface{}, imageName string) []string {
+	command := []string{nixpacksBinary, "build", ".", "--name", imageName}
+
+	overrides := extractCommandOverrides(planData)
+	if overrides.install != "" {
+		command = append(command, "--install-cmd", overrides.install)
+	}
+	if overrides.build != "" {
+		command = append(command, "--build-cmd", overrides.build)
+	}
+	if overrides.start != "" {
+		command = append(command, "--start-cmd", overrides.start)
+	}
+
+	return command
+}
+
+type commandOverrides struct {
+	install string
+	build   string
+	start   string
+}
+
+func extractCommandOverrides(planData map[string]interface{}) commandOverrides {
+	var overrides commandOverrides
+
+	if phases, ok := planData["phases"].(map[string]interface{}); ok {
+		overrides.install = commandFromPhase(phases, "setup", overrides.install)
+		overrides.install = commandFromPhase(phases, "install", overrides.install)
+		overrides.build = commandFromPhase(phases, "build", overrides.build)
+		overrides.start = commandFromPhase(phases, "start", overrides.start)
+	}
+
+	if overrides.install == "" {
+		overrides.install = stringField(planData, "installCmd")
+	}
+	if overrides.build == "" {
+		if buildSlice, ok := planData["buildCmd"].([]interface{}); ok {
+			overrides.build = joinInterfaceSlice(buildSlice)
+		} else {
+			overrides.build = stringField(planData, "buildCmd")
+		}
+	}
+	if overrides.start == "" {
+		overrides.start = stringField(planData, "startCmd")
+	}
+
+	return overrides
+}
+
+func commandFromPhase(phases map[string]interface{}, key string, existing string) string {
+	if existing != "" {
+		return existing
+	}
+	if phase, ok := phases[key].(map[string]interface{}); ok {
+		if cmd, ok := phase["cmd"].(string); ok {
+			return strings.TrimSpace(cmd)
+		}
+	}
+	return existing
+}
+
+func stringField(data map[string]interface{}, key string) string {
+	if value, ok := data[key].(string); ok {
+		return strings.TrimSpace(value)
+	}
+	return ""
+}
+
+func joinInterfaceSlice(values []interface{}) string {
+	parts := make([]string, 0, len(values))
+	for _, v := range values {
+		part := strings.TrimSpace(fmt.Sprintf("%v", v))
+		if part != "" {
+			parts = append(parts, part)
+		}
+	}
+	return strings.Join(parts, " ")
+}
+
+func (n *NixpacksServiceImpl) mergeDetectedPlanData(ctx context.Context, workDir string, planData map[string]interface{}) map[string]interface{} {
+	if planData == nil {
+		planData = make(map[string]interface{})
+	}
+
+	cmd := exec.CommandContext(ctx, nixpacksBinary, "plan", ".", "--format", "json")
+	cmd.Dir = workDir
+
+	output, err := cmd.Output()
+	if err != nil {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
+			n.logger.Warn("Failed to detect Nixpacks plan", "error", strings.TrimSpace(string(exitErr.Stderr)))
+		} else {
+			n.logger.Warn("Failed to run Nixpacks plan", "error", err)
+		}
+		return planData
+	}
+
+	detected := make(map[string]interface{})
+	if err := json.Unmarshal(trimBOM(output), &detected); err != nil {
+		n.logger.Warn("Failed to parse detected Nixpacks plan", "error", err)
+		return planData
+	}
+
+	return mergePlanMaps(detected, planData)
+}
+
+var providerDependencies = map[string][]string{
+	"bun": {"node"},
+}
+
+func canonicalProviderKey(raw string) string {
+	key := strings.ToLower(strings.TrimSpace(raw))
+	switch key {
+	case "nodejs":
+		return "node"
+	case "node":
+		return "node"
+	case "bun":
+		return "bun"
+	case "python":
+		return "python"
+	case "ruby":
+		return "ruby"
+	case "go":
+		return "go"
+	case "java":
+		return "java"
+	case "dotnet":
+		return "dotnet"
+	case "php":
+		return "php"
+	default:
+		return key
+	}
+}
+
+func (n *NixpacksServiceImpl) applyRuntimeGuardrails(planData map[string]interface{}, envVars map[string]string) []string {
+	providerSet := make(map[string]struct{})
+
+	var addProvider func(string)
+	addProvider = func(raw string) {
+		key := canonicalProviderKey(raw)
+		if key == "" {
+			return
+		}
+		if _, exists := providerSet[key]; exists {
+			return
+		}
+		providerSet[key] = struct{}{}
+		if deps, ok := providerDependencies[key]; ok {
+			for _, dep := range deps {
+				addProvider(dep)
+			}
+		}
+	}
+
+	for _, provider := range extractProviders(planData) {
+		addProvider(provider)
+	}
+
+	if metadataEnv := strings.TrimSpace(strings.ToLower(envVars["NIXPACKS_METADATA"])); metadataEnv != "" {
+		addProvider(metadataEnv)
+	}
+
+	if metadata := stringField(planData, "metadata"); metadata != "" {
+		addProvider(metadata)
+	}
+
+	if len(providerSet) == 0 {
+		return nil
+	}
+
+	notes := make([]string, 0, len(providerSet))
+
+	for provider := range providerSet {
+		spec, ok := runtimeGuardrails[provider]
+		if !ok {
+			continue
+		}
+
+		candidate := findExistingVersion(spec, envVars, planData)
+		normalized, adjusted := normalizeRuntimeVersion(spec, candidate)
+		if !adjusted {
+			continue
+		}
+
+		for _, envKey := range spec.EnvKeys {
+			if envKey == "" {
+				continue
+			}
+			envVars[envKey] = normalized
+		}
+
+		notes = append(notes, fmt.Sprintf("%s → %s", spec.DisplayName, normalized))
+	}
+
+	sort.Strings(notes)
+	return notes
+}
+
+func extractProviders(planData map[string]interface{}) []string {
+	providersRaw, ok := planData["providers"].([]interface{})
+	if !ok {
+		return nil
+	}
+
+	providers := make([]string, 0, len(providersRaw))
+	seen := make(map[string]struct{})
+	for _, value := range providersRaw {
+		raw := strings.TrimSpace(fmt.Sprintf("%v", value))
+		key := canonicalProviderKey(raw)
+		if key == "" {
+			continue
+		}
+		if _, exists := seen[key]; exists {
+			continue
+		}
+		seen[key] = struct{}{}
+		providers = append(providers, key)
+	}
+	return providers
+}
+
+func findExistingVersion(spec runtimeGuardrailSpec, envVars map[string]string, planData map[string]interface{}) string {
+	for _, key := range spec.EnvKeys {
+		if value := strings.TrimSpace(envVars[key]); value != "" {
+			return value
+		}
+	}
+
+	if variables, ok := planData["variables"].(map[string]interface{}); ok {
+		for _, key := range spec.EnvKeys {
+			if value, ok := variables[key]; ok {
+				if str := strings.TrimSpace(fmt.Sprintf("%v", value)); str != "" {
+					return str
+				}
+			}
+		}
+	}
+
+	if env, ok := planData["env"].(map[string]interface{}); ok {
+		for _, key := range spec.EnvKeys {
+			if value, ok := env[key]; ok {
+				if str := strings.TrimSpace(fmt.Sprintf("%v", value)); str != "" {
+					return str
+				}
+			}
+		}
+	}
+
+	return ""
+}
+
+func normalizeRuntimeVersion(spec runtimeGuardrailSpec, candidate string) (string, bool) {
+	candidate = strings.TrimSpace(candidate)
+	if candidate == "" {
+		return spec.DefaultVersion, spec.DefaultVersion != ""
+	}
+
+	version := parseVersion(candidate)
+	if version.Invalid {
+		return spec.DefaultVersion, spec.DefaultVersion != ""
+	}
+
+	if version.Major < spec.MinMajor {
+		return spec.DefaultVersion, spec.DefaultVersion != ""
+	}
+	if version.Major == spec.MinMajor && version.Minor < spec.MinMinor {
+		return spec.DefaultVersion, spec.DefaultVersion != ""
+	}
+
+	return candidate, false
+}
+
+type parsedVersion struct {
+	Major   int
+	Minor   int
+	Invalid bool
+}
+
+func parseVersion(raw string) parsedVersion {
+	raw = strings.TrimSpace(strings.TrimPrefix(strings.ToLower(raw), "v"))
+	if raw == "" {
+		return parsedVersion{Invalid: true}
+	}
+
+	parts := strings.Split(raw, ".")
+	major, err := strconv.Atoi(parts[0])
+	if err != nil {
+		return parsedVersion{Invalid: true}
+	}
+
+	minor := 0
+	if len(parts) > 1 {
+		if value, err := strconv.Atoi(parts[1]); err == nil {
+			minor = value
+		}
+	}
+
+	return parsedVersion{Major: major, Minor: minor}
+}
+
+type runtimeGuardrailSpec struct {
+	DisplayName    string
+	EnvKeys        []string
+	DefaultVersion string
+	MinMajor       int
+	MinMinor       int
+}
+
+var runtimeGuardrails = map[string]runtimeGuardrailSpec{
+	"node": {
+		DisplayName:    "Node.js",
+		EnvKeys:        []string{"NIXPACKS_NODE_VERSION", "NODE_VERSION"},
+		DefaultVersion: defaultNixpacksNodeVersion,
+		MinMajor:       22,
+		MinMinor:       0,
+	},
+	"nodejs": {
+		DisplayName:    "Node.js",
+		EnvKeys:        []string{"NIXPACKS_NODE_VERSION", "NODE_VERSION"},
+		DefaultVersion: defaultNixpacksNodeVersion,
+		MinMajor:       22,
+		MinMinor:       0,
+	},
+	"bun": {
+		DisplayName:    "Bun",
+		EnvKeys:        []string{"BUN_VERSION"},
+		DefaultVersion: "latest",
+		MinMajor:       1,
+		MinMinor:       0,
+	},
+	"python": {
+		DisplayName:    "Python",
+		EnvKeys:        []string{"PYTHON_VERSION"},
+		DefaultVersion: "3.12",
+		MinMajor:       3,
+		MinMinor:       11,
+	},
+	"ruby": {
+		DisplayName:    "Ruby",
+		EnvKeys:        []string{"RUBY_VERSION"},
+		DefaultVersion: "3.3",
+		MinMajor:       3,
+		MinMinor:       2,
+	},
+	"go": {
+		DisplayName:    "Go",
+		EnvKeys:        []string{"GO_VERSION", "GOVERSION"},
+		DefaultVersion: "1.22",
+		MinMajor:       1,
+		MinMinor:       21,
+	},
+	"java": {
+		DisplayName:    "Java",
+		EnvKeys:        []string{"JAVA_VERSION"},
+		DefaultVersion: "21",
+		MinMajor:       21,
+		MinMinor:       0,
+	},
+	"dotnet": {
+		DisplayName:    ".NET",
+		EnvKeys:        []string{"DOTNET_VERSION", "DOTNET_SDK_VERSION"},
+		DefaultVersion: "8.0",
+		MinMajor:       8,
+		MinMinor:       0,
+	},
+	"php": {
+		DisplayName:    "PHP",
+		EnvKeys:        []string{"PHP_VERSION"},
+		DefaultVersion: "8.3",
+		MinMajor:       8,
+		MinMinor:       2,
+	},
+}
+
+func mergePlanMaps(base, override map[string]interface{}) map[string]interface{} {
+	result := clonePlanMap(base)
+	for key, value := range override {
+		if existing, ok := result[key]; ok {
+			existingMap, okExisting := existing.(map[string]interface{})
+			valueMap, okValue := value.(map[string]interface{})
+			if okExisting && okValue {
+				result[key] = mergePlanMaps(existingMap, valueMap)
+				continue
+			}
+		}
+		result[key] = clonePlanValue(value)
+	}
+	return result
+}
+
+func clonePlanMap(source map[string]interface{}) map[string]interface{} {
+	if source == nil {
+		return make(map[string]interface{})
+	}
+	clone := make(map[string]interface{}, len(source))
+	for key, value := range source {
+		clone[key] = clonePlanValue(value)
+	}
+	return clone
+}
+
+func clonePlanValue(value interface{}) interface{} {
+	switch v := value.(type) {
+	case map[string]interface{}:
+		return clonePlanMap(v)
+	case []interface{}:
+		copySlice := make([]interface{}, len(v))
+		for i, item := range v {
+			copySlice[i] = clonePlanValue(item)
+		}
+		return copySlice
+	default:
+		return v
+	}
+}
+
+func trimBOM(data []byte) []byte {
+	if len(data) >= 3 && data[0] == 0xEF && data[1] == 0xBB && data[2] == 0xBF {
+		return data[3:]
+	}
+	return data
 }

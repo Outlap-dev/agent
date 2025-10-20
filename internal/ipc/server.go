@@ -21,13 +21,13 @@ type Server struct {
 	validator *RequestValidator
 	handler   RequestHandler
 	listener  net.Listener
-	
+
 	// Connection management
 	mu          sync.RWMutex
 	connections map[string]*Connection
 	shutdown    chan struct{}
 	wg          sync.WaitGroup
-	
+
 	// Request tracking
 	requestsMu     sync.RWMutex
 	activeRequests map[string]*ActiveRequest
@@ -35,11 +35,11 @@ type Server struct {
 
 // Connection represents a client connection to the IPC server
 type Connection struct {
-	ID       string
-	Conn     net.Conn
+	ID         string
+	Conn       net.Conn
 	ClientInfo ClientInfo
-	LastSeen time.Time
-	mu       sync.Mutex
+	LastSeen   time.Time
+	mu         sync.Mutex
 }
 
 // ActiveRequest represents an ongoing privileged request
@@ -78,7 +78,7 @@ func (a *AuditLoggerImpl) LogSecurityEvent(event SecurityEvent) {
 func NewServer(config *SocketConfig, logger *logger.Logger, handler RequestHandler) *Server {
 	auditLogger := &AuditLoggerImpl{logger: logger.With("component", "audit")}
 	validator := NewRequestValidator(auditLogger)
-	
+
 	return &Server{
 		config:         config,
 		logger:         logger.With("component", "ipc_server"),
@@ -140,36 +140,36 @@ func (s *Server) Start(ctx context.Context) error {
 // Stop stops the IPC server
 func (s *Server) Stop() error {
 	s.logger.Info("Stopping IPC server")
-	
+
 	close(s.shutdown)
-	
+
 	// Close listener
 	if s.listener != nil {
 		s.listener.Close()
 	}
-	
+
 	// Close all connections
 	s.mu.RLock()
 	for _, conn := range s.connections {
 		conn.Conn.Close()
 	}
 	s.mu.RUnlock()
-	
+
 	// Cancel all active requests
 	s.requestsMu.RLock()
 	for _, req := range s.activeRequests {
 		req.Cancel()
 	}
 	s.requestsMu.RUnlock()
-	
+
 	// Wait for goroutines to finish
 	s.wg.Wait()
-	
+
 	// Remove socket file
 	if err := os.RemoveAll(s.config.SocketPath); err != nil {
 		s.logger.Warn("Failed to remove socket file", "error", err)
 	}
-	
+
 	s.logger.Info("IPC server stopped")
 	return nil
 }
@@ -177,7 +177,7 @@ func (s *Server) Stop() error {
 // acceptLoop accepts incoming connections
 func (s *Server) acceptLoop(ctx context.Context) {
 	defer s.wg.Done()
-	
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -186,12 +186,12 @@ func (s *Server) acceptLoop(ctx context.Context) {
 			return
 		default:
 		}
-		
+
 		// Set accept timeout
 		if tcpListener, ok := s.listener.(*net.UnixListener); ok {
 			tcpListener.SetDeadline(time.Now().Add(time.Second))
 		}
-		
+
 		conn, err := s.listener.Accept()
 		if err != nil {
 			if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
@@ -211,7 +211,7 @@ func (s *Server) acceptLoop(ctx context.Context) {
 				return
 			}
 		}
-		
+
 		// Handle new connection
 		s.wg.Add(1)
 		go s.handleConnection(ctx, conn)
@@ -222,14 +222,14 @@ func (s *Server) acceptLoop(ctx context.Context) {
 func (s *Server) handleConnection(ctx context.Context, conn net.Conn) {
 	defer s.wg.Done()
 	defer conn.Close()
-	
+
 	// Get client info
 	clientInfo, err := GetClientInfo(conn)
 	if err != nil {
 		s.logger.Error("Failed to get client info", "error", err)
 		return
 	}
-	
+
 	// Create connection object
 	connectionID := fmt.Sprintf("conn_%d_%d", clientInfo.PID, time.Now().UnixNano())
 	connection := &Connection{
@@ -238,25 +238,19 @@ func (s *Server) handleConnection(ctx context.Context, conn net.Conn) {
 		ClientInfo: clientInfo,
 		LastSeen:   time.Now(),
 	}
-	
+
 	// Register connection
 	s.mu.Lock()
 	s.connections[connectionID] = connection
 	s.mu.Unlock()
-	
+
 	// Clean up connection when done
 	defer func() {
 		s.mu.Lock()
 		delete(s.connections, connectionID)
 		s.mu.Unlock()
 	}()
-	
-	s.logger.Info("New client connected", 
-		"connection_id", connectionID,
-		"client_pid", clientInfo.PID,
-		"client_uid", clientInfo.UID,
-	)
-	
+
 	// Handle messages
 	for {
 		select {
@@ -266,10 +260,10 @@ func (s *Server) handleConnection(ctx context.Context, conn net.Conn) {
 			return
 		default:
 		}
-		
+
 		// Set read timeout
 		conn.SetReadDeadline(time.Now().Add(s.config.Timeout))
-		
+
 		// Read message
 		var msg Message
 		decoder := json.NewDecoder(conn)
@@ -280,15 +274,15 @@ func (s *Server) handleConnection(ctx context.Context, conn net.Conn) {
 			s.logger.Debug("Connection closed or read error", "error", err)
 			return
 		}
-		
+
 		// Update last seen
 		connection.mu.Lock()
 		connection.LastSeen = time.Now()
 		connection.mu.Unlock()
-		
+
 		// Handle message
 		response := s.handleMessage(ctx, &msg, connection)
-		
+
 		// Send response
 		if response != nil {
 			conn.SetWriteDeadline(time.Now().Add(s.config.Timeout))
@@ -338,12 +332,12 @@ func (s *Server) handleRequest(ctx context.Context, data json.RawMessage, conn *
 			}),
 		}
 	}
-	
+
 	startTime := time.Now()
-	
+
 	// Validate request
 	if err := s.validator.ValidateRequest(&req, conn.ClientInfo); err != nil {
-		s.logger.Error("Request validation failed", 
+		s.logger.Error("Request validation failed",
 			"request_id", req.ID,
 			"operation", req.Operation,
 			"client_pid", conn.ClientInfo.PID,
@@ -359,11 +353,11 @@ func (s *Server) handleRequest(ctx context.Context, data json.RawMessage, conn *
 			}),
 		}
 	}
-	
+
 	// Create request context with timeout
 	config, _ := GetOperationConfig(OperationType(req.Operation))
 	requestCtx, cancel := context.WithTimeout(ctx, config.MaxTimeout)
-	
+
 	// Track active request
 	activeReq := &ActiveRequest{
 		ID:        req.ID,
@@ -373,11 +367,11 @@ func (s *Server) handleRequest(ctx context.Context, data json.RawMessage, conn *
 		Context:   requestCtx,
 		Cancel:    cancel,
 	}
-	
+
 	s.requestsMu.Lock()
 	s.activeRequests[req.ID] = activeReq
 	s.requestsMu.Unlock()
-	
+
 	// Clean up when done
 	defer func() {
 		cancel()
@@ -385,13 +379,13 @@ func (s *Server) handleRequest(ctx context.Context, data json.RawMessage, conn *
 		delete(s.activeRequests, req.ID)
 		s.requestsMu.Unlock()
 	}()
-	
+
 	s.logger.Info("Processing privileged request",
 		"request_id", req.ID,
 		"operation", req.Operation,
 		"client_pid", conn.ClientInfo.PID,
 	)
-	
+
 	// Handle the request
 	response, err := s.handler.HandlePrivilegedRequest(requestCtx, &req)
 	if err != nil {
@@ -415,7 +409,7 @@ func (s *Server) handleRequest(ctx context.Context, data json.RawMessage, conn *
 			"took", response.Took,
 		)
 	}
-	
+
 	return &Message{
 		Type: string(MessageTypeResponse),
 		Data: s.encodeResponse(response),
@@ -429,12 +423,12 @@ func (s *Server) handleHeartbeat(data json.RawMessage, conn *Connection) *Messag
 		s.logger.Warn("Failed to parse heartbeat", "error", err)
 		return nil
 	}
-	
+
 	s.logger.Debug("Received heartbeat",
 		"client_pid", heartbeat.PID,
 		"status", heartbeat.Status,
 	)
-	
+
 	// Send heartbeat response
 	response := HeartbeatMessage{
 		ProcessType: "supervisor",
@@ -442,7 +436,7 @@ func (s *Server) handleHeartbeat(data json.RawMessage, conn *Connection) *Messag
 		Timestamp:   time.Now(),
 		Status:      "healthy",
 	}
-	
+
 	responseData, _ := json.Marshal(response)
 	return &Message{
 		Type: string(MessageTypeHeartbeat),
@@ -453,10 +447,10 @@ func (s *Server) handleHeartbeat(data json.RawMessage, conn *Connection) *Messag
 // cleanupLoop periodically cleans up stale connections and requests
 func (s *Server) cleanupLoop(ctx context.Context) {
 	defer s.wg.Done()
-	
+
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
-	
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -473,7 +467,7 @@ func (s *Server) cleanupLoop(ctx context.Context) {
 func (s *Server) cleanup() {
 	now := time.Now()
 	staleThreshold := 5 * time.Minute
-	
+
 	// Clean up stale connections
 	s.mu.Lock()
 	for id, conn := range s.connections {
@@ -486,7 +480,7 @@ func (s *Server) cleanup() {
 		conn.mu.Unlock()
 	}
 	s.mu.Unlock()
-	
+
 	// Clean up long-running requests
 	s.requestsMu.Lock()
 	for id, req := range s.activeRequests {
@@ -518,7 +512,7 @@ func (s *Server) encodeResponse(response *PrivilegedResponse) json.RawMessage {
 func (s *Server) GetActiveRequests() map[string]*ActiveRequest {
 	s.requestsMu.RLock()
 	defer s.requestsMu.RUnlock()
-	
+
 	result := make(map[string]*ActiveRequest)
 	for id, req := range s.activeRequests {
 		result[id] = req
@@ -530,7 +524,7 @@ func (s *Server) GetActiveRequests() map[string]*ActiveRequest {
 func (s *Server) GetConnections() map[string]*Connection {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	
+
 	result := make(map[string]*Connection)
 	for id, conn := range s.connections {
 		result[id] = conn
@@ -543,11 +537,11 @@ func (s *Server) GetStats() map[string]interface{} {
 	s.mu.RLock()
 	connectionCount := len(s.connections)
 	s.mu.RUnlock()
-	
+
 	s.requestsMu.RLock()
 	activeRequestCount := len(s.activeRequests)
 	s.requestsMu.RUnlock()
-	
+
 	return map[string]interface{}{
 		"active_connections": connectionCount,
 		"active_requests":    activeRequestCount,

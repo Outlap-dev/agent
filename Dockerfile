@@ -18,7 +18,7 @@ COPY internal/ ./internal/
 COPY pkg/ ./pkg/
 
 # Build arguments for version info
-ARG VERSION=1.0.1
+ARG VERSION
 ARG BUILD_DATE
 ARG GIT_COMMIT=unknown
 ARG ENABLE_DEBUG=false

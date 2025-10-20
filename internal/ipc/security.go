@@ -17,22 +17,22 @@ import (
 
 // RequestValidator provides comprehensive validation for privileged requests
 type RequestValidator struct {
-	mu               sync.RWMutex
-	rateLimiters     map[OperationType]*RateLimiter
-	allowedPaths     map[string]bool
-	blockedPaths     map[string]bool
-	allowedDirs      []string // Configurable allowed directories
-	trustedPIDs      map[int]bool
-	auditLogger      AuditLogger
+	mu           sync.RWMutex
+	rateLimiters map[OperationType]*RateLimiter
+	allowedPaths map[string]bool
+	blockedPaths map[string]bool
+	allowedDirs  []string // Configurable allowed directories
+	trustedPIDs  map[int]bool
+	auditLogger  AuditLogger
 }
 
 // RateLimiter implements rate limiting for operations
 type RateLimiter struct {
-	mu          sync.Mutex
-	lastReset   time.Time
-	count       int
-	maxCalls    int
-	window      time.Duration
+	mu        sync.Mutex
+	lastReset time.Time
+	count     int
+	maxCalls  int
+	window    time.Duration
 }
 
 // AuditLogger interface for logging security events
@@ -42,14 +42,14 @@ type AuditLogger interface {
 
 // SecurityEvent represents a security-relevant event
 type SecurityEvent struct {
-	Timestamp   time.Time         `json:"timestamp"`
-	EventType   string            `json:"event_type"`
-	Operation   OperationType     `json:"operation"`
-	WorkerPID   int               `json:"worker_pid"`
-	Allowed     bool              `json:"allowed"`
-	Reason      string            `json:"reason"`
+	Timestamp   time.Time              `json:"timestamp"`
+	EventType   string                 `json:"event_type"`
+	Operation   OperationType          `json:"operation"`
+	WorkerPID   int                    `json:"worker_pid"`
+	Allowed     bool                   `json:"allowed"`
+	Reason      string                 `json:"reason"`
 	RequestArgs map[string]interface{} `json:"request_args,omitempty"`
-	ClientInfo  ClientInfo        `json:"client_info,omitempty"`
+	ClientInfo  ClientInfo             `json:"client_info,omitempty"`
 }
 
 // ClientInfo contains information about the requesting client
@@ -65,12 +65,12 @@ func NewRequestValidator(auditLogger AuditLogger) *RequestValidator {
 	// Default allowed directories - these will be validated for existence
 	defaultAllowedDirs := []string{
 		"/opt/pulseup/",
-		"/etc/pulseup-agent/", 
+		"/etc/pulseup-agent/",
 		"/var/lib/pulseup/",
 		"/var/log/pulseup/",
 		"/tmp/pulseup/",
 	}
-	
+
 	validator := &RequestValidator{
 		rateLimiters: make(map[OperationType]*RateLimiter),
 		allowedPaths: make(map[string]bool),
@@ -79,28 +79,28 @@ func NewRequestValidator(auditLogger AuditLogger) *RequestValidator {
 		trustedPIDs:  make(map[int]bool),
 		auditLogger:  auditLogger,
 	}
-	
+
 	return validator
 }
 
 // validateAndFilterDirs validates that directories exist or can be created
 func validateAndFilterDirs(dirs []string) []string {
 	var validDirs []string
-	
+
 	for _, dir := range dirs {
 		// Check if directory exists
 		if _, err := os.Stat(dir); err == nil {
 			validDirs = append(validDirs, dir)
 			continue
 		}
-		
+
 		// Try to create the directory if it doesn't exist
 		if err := os.MkdirAll(dir, 0755); err == nil {
 			validDirs = append(validDirs, dir)
 		}
 		// If we can't create it, we skip it (could log this if needed)
 	}
-	
+
 	return validDirs
 }
 
@@ -236,12 +236,6 @@ func (v *RequestValidator) validateArgument(name string, value interface{}) erro
 		return v.validatePackageName(strValue)
 	case "service_name":
 		return v.validateServiceName(strValue)
-	case "container_id", "container_name":
-		return v.validateContainerIdentifier(strValue)
-	case "image":
-		return v.validateDockerImage(strValue)
-	case "build_context":
-		return v.validateBuildContext(strValue)
 	case "command":
 		return v.validateCommand(strValue)
 	}
@@ -253,7 +247,7 @@ func (v *RequestValidator) validateArgument(name string, value interface{}) erro
 func (v *RequestValidator) validateFilePath(path string) error {
 	// Clean the path
 	cleanPath := filepath.Clean(path)
-	
+
 	// Check for directory traversal
 	if strings.Contains(cleanPath, "..") {
 		return fmt.Errorf("directory traversal detected in path: %s", path)
@@ -317,22 +311,22 @@ func (v *RequestValidator) validateServiceName(name string) error {
 
 	// Whitelist of allowed services
 	allowedServices := map[string]bool{
-		"docker":        true,
-		"caddy":         true,
-		"nginx":         true,
-		"apache2":       true,
-		"mysql":         true,
-		"postgresql":    true,
-		"redis":         true,
-		"mongodb":       true,
-		"pulseup-agent": true,
+		"docker":             true,
+		"caddy":              true,
+		"nginx":              true,
+		"apache2":            true,
+		"mysql":              true,
+		"postgresql":         true,
+		"redis":              true,
+		"mongodb":            true,
+		"pulseup-agent":      true,
 		"pulseup-supervisor": true,
 		"pulseup-worker":     true,
 	}
 
 	// Remove .service suffix if present
 	cleanName := strings.TrimSuffix(name, ".service")
-	
+
 	if !allowedServices[cleanName] {
 		return fmt.Errorf("service not in allowlist: %s", name)
 	}
@@ -384,33 +378,30 @@ func (v *RequestValidator) validateCommand(command string) error {
 
 // validateOperationSpecific performs operation-specific validation
 func (v *RequestValidator) validateOperationSpecific(op OperationType, args map[string]interface{}) error {
-	switch op {
-	case OpSystemReboot, OpSystemShutdown:
-		// These operations have no additional validation requirements
-		return nil
-		
-	case OpAgentUpdate:
-		// Validate update file exists and has proper permissions
-		if filePath, ok := args["update_file_path"].(string); ok {
-			if _, err := os.Stat(filePath); err != nil {
-				return fmt.Errorf("update file not found: %s", filePath)
-			}
-		}
-		return nil
-		
-	case OpDockerCreate:
-		// Additional validation for Docker container creation
-		if image, ok := args["image"].(string); ok {
-			if err := v.validateDockerImage(image); err != nil {
-				return err
-			}
-		}
-		return nil
-		
-	default:
-		// No specific validation for other operations
+	if op != OpAgentUpdate {
 		return nil
 	}
+
+	filePath, ok := args["update_file_path"].(string)
+	if !ok {
+		return fmt.Errorf("update_file_path is required")
+	}
+
+	if _, err := os.Stat(filePath); err != nil {
+		return fmt.Errorf("update file not found: %s", filePath)
+	}
+
+	manifest, manifestOK := args["checksum_manifest"].(string)
+	if !manifestOK || strings.TrimSpace(manifest) == "" {
+		return fmt.Errorf("checksum_manifest is required")
+	}
+
+	signature, signatureOK := args["signature"].(string)
+	if !signatureOK || strings.TrimSpace(signature) == "" {
+		return fmt.Errorf("signature is required")
+	}
+
+	return nil
 }
 
 // checkRateLimit checks if an operation has exceeded its rate limit
@@ -438,7 +429,7 @@ func (rl *RateLimiter) CheckAndIncrement() error {
 	defer rl.mu.Unlock()
 
 	now := time.Now()
-	
+
 	// Reset counter if window has elapsed
 	if now.Sub(rl.lastReset) >= rl.window {
 		rl.count = 0
@@ -486,16 +477,16 @@ func GetClientInfo(conn net.Conn) (ClientInfo, error) {
 
 		var pid, uid, gid int
 		var credErr error
-		
+
 		// Use the raw connection to get SO_PEERCRED
 		err = rawConn.Control(func(fd uintptr) {
 			pid, uid, gid, credErr = getPeerCredentials(int(fd))
 		})
-		
+
 		if err != nil {
 			return clientInfo, fmt.Errorf("failed to control connection: %w", err)
 		}
-		
+
 		if credErr != nil {
 			return clientInfo, fmt.Errorf("failed to get peer credentials: %w", credErr)
 		}
@@ -529,7 +520,7 @@ func GetClientInfo(conn net.Conn) (ClientInfo, error) {
 func getPeerCredentials(fd int) (pid, uid, gid int, err error) {
 	// SO_PEERCRED constant (17 on Linux)
 	const SO_PEERCRED = 17
-	
+
 	// Structure for ucred (user credentials) - Linux specific
 	type ucred struct {
 		Pid int32
@@ -540,7 +531,7 @@ func getPeerCredentials(fd int) (pid, uid, gid int, err error) {
 	// Get SO_PEERCRED from the socket
 	cred := ucred{}
 	credSize := unsafe.Sizeof(cred)
-	
+
 	// Use syscall to get socket option SO_PEERCRED
 	_, _, errno := syscall.Syscall6(
 		syscall.SYS_GETSOCKOPT,
@@ -551,7 +542,7 @@ func getPeerCredentials(fd int) (pid, uid, gid int, err error) {
 		uintptr(unsafe.Pointer(&credSize)),
 		0,
 	)
-	
+
 	if errno != 0 {
 		return 0, 0, 0, fmt.Errorf("getsockopt SO_PEERCRED failed: %v", errno)
 	}
@@ -566,7 +557,7 @@ func getProcessCommand(pid int) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("failed to read %s: %w", commPath, err)
 	}
-	
+
 	// Remove trailing newline
 	comm := strings.TrimSpace(string(data))
 	return comm, nil
@@ -576,7 +567,7 @@ func getProcessCommand(pid int) (string, error) {
 func validateWorkerProcess(clientInfo ClientInfo) error {
 	// Check command name matches expected worker process
 	expectedCommands := []string{"pulseup-worker", "worker"}
-	
+
 	validCommand := false
 	for _, expected := range expectedCommands {
 		if clientInfo.Comm == expected {
@@ -584,9 +575,9 @@ func validateWorkerProcess(clientInfo ClientInfo) error {
 			break
 		}
 	}
-	
+
 	if !validCommand {
-		return fmt.Errorf("invalid command name: %s, expected one of %v", 
+		return fmt.Errorf("invalid command name: %s, expected one of %v",
 			clientInfo.Comm, expectedCommands)
 	}
 
@@ -605,11 +596,11 @@ func validateWorkerProcess(clientInfo ClientInfo) error {
 			// Accept either pulseup-worker in path OR if running in Docker environment
 			isWorkerBinary := strings.Contains(target, "pulseup-worker")
 			isDockerRosetta := strings.Contains(target, "/run/rosetta/rosetta")
-			
+
 			if !isWorkerBinary && !isDockerRosetta {
 				return fmt.Errorf("process executable %s does not appear to be pulseup-worker", target)
 			}
-			
+
 			// For Rosetta processes, verify the command line contains pulseup-worker
 			if isDockerRosetta {
 				cmdlinePath := fmt.Sprintf("/proc/%d/cmdline", clientInfo.PID)
@@ -645,7 +636,7 @@ func (v *RequestValidator) SetAllowedDirectories(dirs []string) {
 func (v *RequestValidator) GetAllowedDirectories() []string {
 	v.mu.RLock()
 	defer v.mu.RUnlock()
-	
+
 	// Return a copy to prevent modification
 	dirs := make([]string, len(v.allowedDirs))
 	copy(dirs, v.allowedDirs)

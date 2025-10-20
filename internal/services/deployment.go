@@ -2,14 +2,15 @@ package services
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strconv"
+	"strings"
 
 	"pulseup-agent-go/pkg/logger"
 	"pulseup-agent-go/pkg/types"
 
 	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/api/types/network"
 	"github.com/docker/go-connections/nat"
 )
 
@@ -101,6 +102,57 @@ func (d *DeploymentServiceImpl) DeployContainer(ctx context.Context, serviceUID,
 	containerName := plan.CandidateName
 	logStep("INFO", fmt.Sprintf("Using candidate container name %s", containerName))
 
+	var portMappings []types.PortMapping
+	if rawMappings, exists := envVars["PULSEUP_PORT_MAPPINGS"]; exists {
+		if rawMappings != "" {
+			if err := json.Unmarshal([]byte(rawMappings), &portMappings); err != nil {
+				d.logger.Warn("Failed to parse port mappings", "error", err)
+				portMappings = nil
+			}
+		}
+		delete(envVars, "PULSEUP_PORT_MAPPINGS")
+	}
+	portMappings = sanitizeDeployPortMappings(portMappings)
+	singleSlotDeployment := requiresSingleSlotDeployment(portMappings)
+	if singleSlotDeployment {
+		logStep("INFO", "Fixed public ports detected; using single-slot deployment workflow")
+		setMetadata("deployment_strategy", "single_slot")
+	}
+
+	if len(portMappings) > 0 {
+		if _, exists := envVars["PORT"]; !exists {
+			envVars["PORT"] = strconv.Itoa(portMappings[0].Internal)
+		}
+	}
+
+	if singleSlotDeployment {
+		if plan.Active != nil {
+			activeName := plan.Active.Name
+			logStep("INFO", fmt.Sprintf("Stopping existing container %s before redeploy", activeName))
+			if err := d.dockerService.StopContainerByName(ctx, activeName); err != nil {
+				d.logger.Warn("failed to stop active container before single-slot deployment", "container", activeName, "error", err)
+				logStep("WARN", fmt.Sprintf("Failed to stop container %s: %v", activeName, err))
+			}
+
+			logStep("INFO", fmt.Sprintf("Removing existing container %s before redeploy", activeName))
+			if err := d.dockerService.RemoveContainerByName(ctx, activeName); err != nil {
+				if !isNotFoundError(err) {
+					d.logger.Error("failed to remove active container before single-slot deployment", "container", activeName, "error", err)
+					logStep("ERROR", fmt.Sprintf("Failed to remove container %s: %v", activeName, err))
+					return &types.DeploymentResult{
+						Success: false,
+						Error:   fmt.Sprintf("Failed to remove existing container %s: %v", activeName, err),
+					}, nil
+				}
+				logStep("WARN", fmt.Sprintf("Container %s was already removed: %v", activeName, err))
+			} else {
+				logStep("INFO", fmt.Sprintf("Removed container %s", activeName))
+			}
+		} else {
+			logStep("INFO", "No existing container found; continuing with single-slot deployment")
+		}
+	}
+
 	// Convert environment variables to Docker format
 	var envList []string
 	for key, value := range envVars {
@@ -111,8 +163,22 @@ func (d *DeploymentServiceImpl) DeployContainer(ctx context.Context, serviceUID,
 	var exposedPorts nat.PortSet
 	var portBindings nat.PortMap
 
-	// Try to get port from environment variables
-	if portStr, exists := envVars["PORT"]; exists {
+	if len(portMappings) > 0 {
+		exposedPorts = nat.PortSet{}
+		portBindings = nat.PortMap{}
+		for _, mapping := range portMappings {
+			containerPort := nat.Port(fmt.Sprintf("%d/tcp", mapping.Internal))
+			exposedPorts[containerPort] = struct{}{}
+			hostPort := "0"
+			if mapping.External > 0 {
+				hostPort = strconv.Itoa(mapping.External)
+			}
+			portBindings[containerPort] = append(portBindings[containerPort], nat.PortBinding{
+				HostIP:   "0.0.0.0",
+				HostPort: hostPort,
+			})
+		}
+	} else if portStr, exists := envVars["PORT"]; exists {
 		if port, err := strconv.Atoi(portStr); err == nil && port > 0 {
 			containerPort := nat.Port(fmt.Sprintf("%d/tcp", port))
 			exposedPorts = nat.PortSet{containerPort: struct{}{}}
@@ -144,7 +210,7 @@ func (d *DeploymentServiceImpl) DeployContainer(ctx context.Context, serviceUID,
 	hostConfig := &container.HostConfig{
 		PortBindings: portBindings,
 		RestartPolicy: container.RestartPolicy{
-			Name: "unless-stopped",
+			Name: "no",
 		},
 		// Add resource limits if needed
 		Resources: container.Resources{
@@ -186,9 +252,11 @@ func (d *DeploymentServiceImpl) DeployContainer(ctx context.Context, serviceUID,
 		}, nil
 	}
 
-	if err := d.lifecycle.DecommissionPreviousActive(ctx, plan); err != nil {
-		d.logger.Warn("failed to decommission previous active container", "service_uid", serviceUID, "error", err)
-		logStep("WARN", fmt.Sprintf("Previous active container cleanup issue: %v", err))
+	if !singleSlotDeployment {
+		if err := d.lifecycle.DecommissionPreviousActive(ctx, plan); err != nil {
+			d.logger.Warn("failed to decommission previous active container", "service_uid", serviceUID, "error", err)
+			logStep("WARN", fmt.Sprintf("Previous active container cleanup issue: %v", err))
+		}
 	}
 
 	if d.domainRefresher != nil {
@@ -216,6 +284,52 @@ func (d *DeploymentServiceImpl) DeployContainer(ctx context.Context, serviceUID,
 		ContainerName:     finalContainerName,
 		DeploymentVersion: plan.Version,
 	}, nil
+}
+
+func sanitizeDeployPortMappings(mappings []types.PortMapping) []types.PortMapping {
+	if len(mappings) == 0 {
+		return nil
+	}
+
+	seen := make(map[int]struct{})
+	result := make([]types.PortMapping, 0, len(mappings))
+	for _, mapping := range mappings {
+		if mapping.Internal <= 0 || mapping.Internal > 65535 {
+			continue
+		}
+		if mapping.External < 0 || mapping.External > 65535 {
+			continue
+		}
+		key := mapping.External
+		if key == 0 {
+			key = -mapping.Internal
+		}
+		if _, exists := seen[key]; exists {
+			continue
+		}
+		seen[key] = struct{}{}
+		result = append(result, mapping)
+	}
+
+	return result
+}
+
+func requiresSingleSlotDeployment(mappings []types.PortMapping) bool {
+	for _, mapping := range mappings {
+		if mapping.External > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+func isNotFoundError(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	message := strings.ToLower(err.Error())
+	return strings.Contains(message, "not found") || strings.Contains(message, "no such container")
 }
 
 // GetContainerInfo retrieves information about a deployed container
@@ -397,21 +511,4 @@ func (d *DeploymentServiceImpl) ValidateDeploymentConfig(config map[string]inter
 	}
 
 	return nil
-}
-
-// parseNetworkConfig parses network configuration for container deployment
-func (d *DeploymentServiceImpl) parseNetworkConfig(networks []string) *network.NetworkingConfig {
-	if len(networks) == 0 {
-		return nil
-	}
-
-	networkingConfig := &network.NetworkingConfig{
-		EndpointsConfig: make(map[string]*network.EndpointSettings),
-	}
-
-	for _, networkName := range networks {
-		networkingConfig.EndpointsConfig[networkName] = &network.EndpointSettings{}
-	}
-
-	return networkingConfig
 }

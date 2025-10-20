@@ -47,14 +47,11 @@ func (c *Container) Initialize(ctx context.Context) error {
 
 	c.serviceContainer = serviceContainer
 
-	c.logger.Info("Worker services initialized successfully")
 	return nil
 }
 
 // Start starts all worker services including WebSocket communication
 func (c *Container) Start(ctx context.Context) error {
-	c.logger.Info("Starting worker services")
-
 	// Start the service container (which handles WebSocket connections)
 	if err := c.serviceContainer.Start(ctx); err != nil {
 		return fmt.Errorf("failed to start service container: %w", err)

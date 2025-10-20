@@ -21,14 +21,13 @@ services:
       - LOG_FORMAT=text
       - CONFIG_PATH=${CONFIG_PATH:-}
       - PULSEUP_CADDY_HOST_PATH=/etc/pulseup-agent/caddy
+      - DOCKER_SOCKET_PATH=${DOCKER_SOCKET_PATH:-/var/run/docker.sock}
     volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
+      - ${DOCKER_SOCKET_PATH:-/var/run/docker.sock}:${DOCKER_SOCKET_PATH:-/var/run/docker.sock}
       - ./certs:/var/lib/pulseup/certs
       - caddy_data:/etc/pulseup-agent/caddy
     extra_hosts:
       - "host.docker.internal:host-gateway"
-    group_add:
-      - ${DOCKER_SOCK_GROUP:-0}
     privileged: true
     ports:
       - "2347:2347"  # Supervisor debugger

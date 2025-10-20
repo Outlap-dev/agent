@@ -134,8 +134,6 @@ func (c *MTLSClient) CheckCertificateRenewal(ctx context.Context) error {
 
 // StartWithAutoRenewal starts the WebSocket client with automatic certificate renewal checking
 func (c *MTLSClient) StartWithAutoRenewal(ctx context.Context) error {
-	c.logger.Info("Starting mTLS WebSocket client with auto-renewal")
-
 	if err := c.ConnectWithMTLS(ctx); err != nil {
 		return fmt.Errorf("initial connection failed: %w", err)
 	}

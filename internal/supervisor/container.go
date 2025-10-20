@@ -16,9 +16,7 @@ type Container struct {
 	logger *logger.Logger
 
 	// Privileged services
-	systemService  *SystemService
-	serviceManager *ServiceManager
-	updateManager  *UpdateManager
+	updateManager *UpdateManager
 }
 
 // NewContainer creates a new supervisor service container
@@ -33,12 +31,6 @@ func NewContainer(cfg *config.Config, logger *logger.Logger) (*Container, error)
 func (c *Container) Initialize(ctx context.Context) error {
 	c.logger.Info("Initializing supervisor services")
 
-	// Initialize system service
-	c.systemService = NewSystemService(c.logger)
-
-	// Initialize service manager
-	c.serviceManager = NewServiceManager(c.logger)
-
 	// Initialize update manager
 	c.updateManager = NewUpdateManager(c.logger, c.config)
 
@@ -51,7 +43,7 @@ func (c *Container) Start(ctx context.Context) error {
 	c.logger.Info("Starting supervisor services")
 
 	// No background services to start currently
-	
+
 	c.logger.Info("Supervisor services started successfully")
 	return nil
 }
@@ -69,7 +61,7 @@ func (c *Container) Shutdown(ctx context.Context) error {
 // HandlePrivilegedRequest handles a privileged request from the worker
 func (c *Container) HandlePrivilegedRequest(ctx context.Context, req *ipc.PrivilegedRequest) (*ipc.PrivilegedResponse, error) {
 	operation := ipc.OperationType(req.Operation)
-	
+
 	c.logger.Info("Handling privileged request",
 		"operation", operation,
 		"request_id", req.ID,
@@ -78,32 +70,8 @@ func (c *Container) HandlePrivilegedRequest(ctx context.Context, req *ipc.Privil
 
 	// Route request to appropriate service
 	switch operation {
-	// System operations
-	case ipc.OpSystemReboot:
-		return c.systemService.Reboot(ctx, req.Args)
-	case ipc.OpSystemShutdown:
-		return c.systemService.Shutdown(ctx, req.Args)
-	case ipc.OpSystemUpdatePackages:
-		return c.systemService.UpdatePackages(ctx, req.Args)
-	case ipc.OpSystemInstallPackage:
-		return c.systemService.InstallPackage(ctx, req.Args)
-
-	// Service management operations
-	case ipc.OpServiceRestart:
-		return c.serviceManager.RestartService(ctx, req.Args)
-	case ipc.OpServiceStart:
-		return c.serviceManager.StartService(ctx, req.Args)
-	case ipc.OpServiceStop:
-		return c.serviceManager.StopService(ctx, req.Args)
-	case ipc.OpServiceStatus:
-		return c.serviceManager.GetServiceStatus(ctx, req.Args)
-
-	// Agent management operations
 	case ipc.OpAgentUpdate:
 		return c.updateManager.UpdateAgent(ctx, req.Args)
-	case ipc.OpAgentRestart:
-		return c.updateManager.RestartAgent(ctx, req.Args)
-
 	default:
 		return &ipc.PrivilegedResponse{
 			Success: false,

@@ -8,10 +8,12 @@ import (
 
 // Build-time variables set by ldflags
 var (
-	Version   = "dev"
-	BuildDate = "unknown"
-	GitCommit = "unknown"
+	Version   = ""
+	BuildDate = ""
+	GitCommit = ""
 )
+
+const versionEnvKey = "PULSEUP_AGENT_VERSION"
 
 // Config holds the application configuration
 type Config struct {
@@ -30,10 +32,6 @@ type Config struct {
 	ReconnectMaxAttempts int
 	ReconnectInterval    int
 	ReconnectBackoffMax  int
-	// Version check configuration
-	VersionCheckEnabled  bool
-	VersionCheckInterval int // in seconds
-	VersionCheckRepo     string
 	// Authentication configuration
 	AuthWaitForConfirmation      bool
 	AuthPermanentFailureCooldown int // in seconds
@@ -44,6 +42,7 @@ type Config struct {
 	UpdateIntervalHours int
 	UpdateURL           string
 	UpdatePublicKeyPath string
+	UpdateRepository    string
 
 	// mTLS and enrollment configuration
 	CertDir   string
@@ -68,9 +67,6 @@ func Load() (*Config, error) {
 		ReconnectMaxAttempts:         getEnvInt("RECONNECT_MAX_ATTEMPTS", 10),
 		ReconnectInterval:            getEnvInt("RECONNECT_INTERVAL", 5),
 		ReconnectBackoffMax:          getEnvInt("RECONNECT_BACKOFF_MAX", 60),
-		VersionCheckEnabled:          getEnvBool("VERSION_CHECK_ENABLED", true),
-		VersionCheckInterval:         getEnvInt("VERSION_CHECK_INTERVAL", 300), // 5 minutes
-		VersionCheckRepo:             getEnv("VERSION_CHECK_REPO", "PulseUp-IO/pulseup-agent"),
 		AuthWaitForConfirmation:      getEnvBool("AUTH_WAIT_FOR_CONFIRMATION", true),
 		AuthPermanentFailureCooldown: getEnvInt("AUTH_PERMANENT_FAILURE_COOLDOWN", 3600), // 1 hour
 		UpdateEnabled:                getEnvBool("UPDATE_ENABLED", false),                // Disabled by default for safety
@@ -78,6 +74,7 @@ func Load() (*Config, error) {
 		UpdateIntervalHours:          getEnvInt("UPDATE_INTERVAL_HOURS", 6),
 		UpdateURL:                    getEnv("UPDATE_URL", "https://updates.pulseup.io/agent/releases/latest.json"),
 		UpdatePublicKeyPath:          getEnv("UPDATE_PUBLIC_KEY_PATH", "/etc/pulseup-agent/update_public.pem"),
+		UpdateRepository:             resolveUpdateRepository(),
 
 		// mTLS and enrollment configuration
 		CertDir:   getEnv("CERT_DIR", "/var/lib/pulseup/certs"),
@@ -165,10 +162,35 @@ func IsNewerVersion(current, latest string) bool {
 
 // GetVersionString returns the current version string
 func GetVersionString() string {
-	return Version
+	if v := strings.TrimSpace(Version); v != "" {
+		return v
+	}
+
+	if envVersion := strings.TrimSpace(os.Getenv(versionEnvKey)); envVersion != "" {
+		return envVersion
+	}
+
+	if commit := strings.TrimSpace(GitCommit); commit != "" {
+		if len(commit) > 7 {
+			commit = commit[:7]
+		}
+		return fmt.Sprintf("git-%s", commit)
+	}
+
+	return "development"
 }
 
 // Helper functions
+
+func resolveUpdateRepository() string {
+	if value := os.Getenv("UPDATE_REPOSITORY"); value != "" {
+		return value
+	}
+	if legacy := os.Getenv("VERSION_CHECK_REPO"); legacy != "" {
+		return legacy
+	}
+	return "PulseUp-IO/pulseup-agent"
+}
 
 func getEnv(key, defaultValue string) string {
 	if value := os.Getenv(key); value != "" {

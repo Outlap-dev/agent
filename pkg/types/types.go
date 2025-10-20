@@ -199,6 +199,13 @@ type DeploymentStepLog struct {
 	Message   string    `json:"message"`
 }
 
+// PortMapping describes a mapping between an external host port and the internal
+// container port it targets for application deployments.
+type PortMapping struct {
+	External int `json:"external"`
+	Internal int `json:"internal"`
+}
+
 // DomainProvisionRequest captures the desired routing configuration for a domain.
 type DomainProvisionRequest struct {
 	Domain             string `json:"domain"`
@@ -312,6 +319,13 @@ type CommandResponse struct {
 	Success bool        `json:"success"`
 	Data    interface{} `json:"data,omitempty"`
 	Error   string      `json:"error,omitempty"`
+}
+
+type AgentConfigPayload struct {
+	AutoUpdatesEnabled bool   `json:"auto_updates_enabled"`
+	CurrentVersion     string `json:"current_version"`
+	LatestVersion      string `json:"latest_version"`
+	UpdateAvailable    bool   `json:"update_available"`
 }
 
 // Build types
@@ -429,6 +443,13 @@ type BackupAutomationConfig struct {
 	RetentionDays  int    `json:"retention_days"`
 }
 
+// BackupStorageVerificationResult describes the outcome of verifying a storage path on the agent.
+type BackupStorageVerificationResult struct {
+	Success        bool   `json:"success"`
+	NormalizedPath string `json:"normalized_path,omitempty"`
+	Message        string `json:"message,omitempty"`
+}
+
 // WebSocketEmitter represents the minimal event emission contract shared between services and handlers.
 type WebSocketEmitter interface {
 	Emit(event string, data interface{}) error
@@ -480,6 +501,7 @@ type DockerComposeDeploymentRequest struct {
 	SelectedServices []string          `json:"selected_services,omitempty"`
 	ProjectName      string            `json:"project_name"`
 	Environment      map[string]string `json:"environment,omitempty"`
+	PortMappings     []PortMapping     `json:"port_mappings,omitempty"`
 }
 
 // DeployApplicationRequest represents the request structure for app deployment
@@ -497,10 +519,13 @@ type DeployApplicationRequest struct {
 	BuildCommand       string                 `json:"build_command,omitempty"`
 	StartCommand       string                 `json:"start_command,omitempty"`
 	InternalPort       int                    `json:"internal_port,omitempty"`
+	ExposedPort        int                    `json:"exposed_port,omitempty"`
+	PortMappings       []PortMapping          `json:"port_mappings,omitempty"`
 	EnvVars            map[string]string      `json:"env_vars,omitempty"`
 	CPULimit           string                 `json:"cpu_limit,omitempty"`
 	MemoryLimit        string                 `json:"memory_limit,omitempty"`
 	DeploymentStrategy string                 `json:"deployment_strategy,omitempty"`
+	BaseDirectory      string                 `json:"base_directory,omitempty"`
 }
 
 // ServiceEnvVarsResponse represents the response from get_service_env_vars
@@ -773,12 +798,14 @@ type CommandResult struct {
 
 // UpdateMetadata represents the metadata for an agent update
 type UpdateMetadata struct {
-	Version   string    `json:"version"`
-	URL       string    `json:"url"`
-	SHA256    string    `json:"sha256"`
-	Signature string    `json:"signature"`
-	SignedAt  time.Time `json:"signed_at"`
-	Changelog string    `json:"changelog,omitempty"`
+	Version          string    `json:"version"`
+	DownloadURL      string    `json:"url"`
+	SHA256           string    `json:"sha256"`
+	Signature        string    `json:"signature"`
+	ChecksumManifest string    `json:"checksum_manifest"`
+	ReleaseURL       string    `json:"release_url,omitempty"`
+	SignedAt         time.Time `json:"signed_at"`
+	Changelog        string    `json:"changelog,omitempty"`
 }
 
 // UpdateConfig represents configuration for agent updates

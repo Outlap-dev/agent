@@ -29,49 +29,8 @@ type PrivilegedResponse struct {
 type OperationType string
 
 const (
-	// System operations
-	OpSystemReboot         OperationType = "system.reboot"
-	OpSystemShutdown       OperationType = "system.shutdown"
-	OpSystemUpdatePackages OperationType = "system.update_packages"
-	OpSystemInstallPackage OperationType = "system.install_package"
-
-	// Service management operations
-	OpServiceRestart OperationType = "service.restart"
-	OpServiceStart   OperationType = "service.start"
-	OpServiceStop    OperationType = "service.stop"
-	OpServiceStatus  OperationType = "service.status"
-
-	// Docker operations
-	OpDockerStart          OperationType = "docker.start"
-	OpDockerStop           OperationType = "docker.stop"
-	OpDockerRestart        OperationType = "docker.restart"
-	OpDockerRemove         OperationType = "docker.remove"
-	OpDockerCreate         OperationType = "docker.create"
-	OpDockerBuild          OperationType = "docker.build"
-	OpDockerPull           OperationType = "docker.pull"
-	OpDockerExec           OperationType = "docker.exec"
-	OpDockerLogs           OperationType = "docker.logs"
-	OpDockerListContainers OperationType = "docker.list_containers"
-	OpDockerPrune          OperationType = "docker.prune"
-
-	// File system operations
-	OpFileWritePrivileged  OperationType = "file.write_privileged"
-	OpFileReadPrivileged   OperationType = "file.read_privileged"
-	OpFileDeletePrivileged OperationType = "file.delete_privileged"
-	OpFileChmodPrivileged  OperationType = "file.chmod_privileged"
-	OpFileChownPrivileged  OperationType = "file.chown_privileged"
-
 	// Agent management operations
-	OpAgentUpdate  OperationType = "agent.update"
-	OpAgentRestart OperationType = "agent.restart"
-
-	// Caddy operations
-	OpCaddyInstall      OperationType = "caddy.install"
-	OpCaddyRestart      OperationType = "caddy.restart"
-	OpCaddyReload       OperationType = "caddy.reload"
-	OpCaddyAddSite      OperationType = "caddy.add_site"
-	OpCaddyRemoveSite   OperationType = "caddy.remove_site"
-	OpCaddyUpdateConfig OperationType = "caddy.update_config"
+	OpAgentUpdate OperationType = "agent.update"
 )
 
 // OperationConfig defines configuration for a privileged operation
@@ -202,103 +161,6 @@ func (r *PrivilegedRequest) Validate() error {
 // GetOperationConfig returns the configuration for a specific operation type
 func GetOperationConfig(op OperationType) (*OperationConfig, error) {
 	configs := map[OperationType]*OperationConfig{
-		OpSystemReboot: {
-			RequiresConfirmation: true,
-			RateLimited:          true,
-			MaxCallsPerMinute:    3,
-			RequiredArgs:         []string{},
-			AllowConcurrent:      false,
-			MaxTimeout:           30 * time.Second,
-			Description:          "Reboot the server",
-		},
-		OpSystemShutdown: {
-			RequiresConfirmation: true,
-			RateLimited:          true,
-			MaxCallsPerMinute:    3,
-			RequiredArgs:         []string{},
-			AllowConcurrent:      false,
-			MaxTimeout:           30 * time.Second,
-			Description:          "Shutdown the server",
-		},
-		OpSystemUpdatePackages: {
-			RequiresConfirmation: true,
-			RateLimited:          true,
-			MaxCallsPerMinute:    30,
-			RequiredArgs:         []string{},
-			OptionalArgs:         []string{"packages"},
-			AllowConcurrent:      false,
-			MaxTimeout:           30 * time.Minute,
-			Description:          "Update system packages",
-		},
-		OpSystemInstallPackage: {
-			RequiresConfirmation: false,
-			RateLimited:          true,
-			MaxCallsPerMinute:    30,
-			RequiredArgs:         []string{"package_name"},
-			AllowConcurrent:      true,
-			MaxTimeout:           10 * time.Minute,
-			Description:          "Install a system package",
-		},
-		OpServiceRestart: {
-			RequiresConfirmation: false,
-			RateLimited:          true,
-			MaxCallsPerMinute:    30,
-			RequiredArgs:         []string{"service_name"},
-			AllowConcurrent:      true,
-			MaxTimeout:           2 * time.Minute,
-			Description:          "Restart a system service",
-		},
-		OpDockerStart: {
-			RequiresConfirmation: false,
-			RateLimited:          false,
-			RequiredArgs:         []string{"container_id"},
-			AllowConcurrent:      true,
-			MaxTimeout:           2 * time.Minute,
-			Description:          "Start a Docker container",
-		},
-		OpDockerStop: {
-			RequiresConfirmation: false,
-			RateLimited:          false,
-			RequiredArgs:         []string{"container_id"},
-			AllowConcurrent:      true,
-			MaxTimeout:           2 * time.Minute,
-			Description:          "Stop a Docker container",
-		},
-		OpDockerRestart: {
-			RequiresConfirmation: false,
-			RateLimited:          false,
-			RequiredArgs:         []string{"container_id"},
-			AllowConcurrent:      true,
-			MaxTimeout:           2 * time.Minute,
-			Description:          "Restart a Docker container",
-		},
-		OpDockerRemove: {
-			RequiresConfirmation: false,
-			RateLimited:          true,
-			MaxCallsPerMinute:    20,
-			RequiredArgs:         []string{"container_id"},
-			AllowConcurrent:      true,
-			MaxTimeout:           2 * time.Minute,
-			Description:          "Remove a Docker container",
-		},
-		OpDockerCreate: {
-			RequiresConfirmation: false,
-			RateLimited:          false,
-			RequiredArgs:         []string{"image", "container_name"},
-			OptionalArgs:         []string{"env_vars", "ports", "volumes", "networks"},
-			AllowConcurrent:      true,
-			MaxTimeout:           10 * time.Minute,
-			Description:          "Create a Docker container",
-		},
-		OpDockerBuild: {
-			RequiresConfirmation: false,
-			RateLimited:          true,
-			MaxCallsPerMinute:    5,
-			RequiredArgs:         []string{"build_context", "tags"},
-			AllowConcurrent:      true,
-			MaxTimeout:           30 * time.Minute,
-			Description:          "Build a Docker image",
-		},
 		OpAgentUpdate: {
 			RequiresConfirmation: true,
 			RateLimited:          true,
@@ -308,25 +170,6 @@ func GetOperationConfig(op OperationType) (*OperationConfig, error) {
 			AllowConcurrent:      false,
 			MaxTimeout:           5 * time.Minute,
 			Description:          "Update the agent binary",
-		},
-		OpAgentRestart: {
-			RequiresConfirmation: false,
-			RateLimited:          true,
-			MaxCallsPerMinute:    5,
-			RequiredArgs:         []string{},
-			AllowConcurrent:      false,
-			MaxTimeout:           1 * time.Minute,
-			Description:          "Restart the agent",
-		},
-		OpFileWritePrivileged: {
-			RequiresConfirmation: false,
-			RateLimited:          true,
-			MaxCallsPerMinute:    50,
-			RequiredArgs:         []string{"file_path", "content"},
-			OptionalArgs:         []string{"mode", "owner", "group"},
-			AllowConcurrent:      true,
-			MaxTimeout:           1 * time.Minute,
-			Description:          "Write to a privileged file location",
 		},
 	}
 

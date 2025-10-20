@@ -63,8 +63,6 @@ func (h *ServiceLogsHandler) Fetch(ctx context.Context, data json.RawMessage) (*
 		request.Lines = 100 // Default to 100 lines
 	}
 
-	h.logger.Info("Getting service logs", "service_uid", request.ServiceUID, "lines", request.Lines)
-
 	// Resolve the active container for the service
 	activeContainer, err := h.resolveActiveContainer(ctx, request.ServiceUID)
 	if err != nil {

@@ -18,7 +18,6 @@ type Router struct {
 type Container interface {
 	HandlerRegistry() *handlers.Registry
 	BaseLogger() *logger.Logger
-	AgentToken() string
 	APIBaseURL() string
 }
 
@@ -190,7 +189,6 @@ func RegisterAll(container Container, services handlers.ServiceProvider) {
 	router := NewRouter(registry, handlerLogger)
 
 	RegisterDatabaseRoutes(router, handlerLogger, services, &DatabaseRouteConfig{
-		AgentToken: container.AgentToken(),
 		APIBaseURL: container.APIBaseURL(),
 	})
 	RegisterServiceRoutes(router, handlerLogger, services)

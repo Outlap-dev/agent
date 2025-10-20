@@ -315,8 +315,6 @@ func (s *TestWebSocketServer) handleWebSocket(w http.ResponseWriter, r *http.Req
 	s.clients[conn] = client
 	s.clientMu.Unlock()
 
-	s.logger.Info("New client connected", "client_id", clientID, "remote_addr", r.RemoteAddr, "auth_timeout", s.authTimeout)
-
 	// Send auth challenge immediately
 	client.sendAuthChallenge()
 

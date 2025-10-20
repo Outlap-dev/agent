@@ -3,6 +3,7 @@ package services
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -17,13 +18,25 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+type composeRunContext struct {
+	LogManager    *deploymentLogManager
+	ServiceUID    string
+	DeploymentUID string
+	LogType       string
+}
+
 type composeCommandRunner interface {
-	Run(ctx context.Context, name string, args []string, workingDir string, env []string) (string, error)
+	Run(ctx context.Context, name string, args []string, workingDir string, env []string, runCtx composeRunContext) (*CommandResult, error)
 }
 
 type execComposeCommandRunner struct{}
 
-func (r *execComposeCommandRunner) Run(ctx context.Context, name string, args []string, workingDir string, env []string) (string, error) {
+func (r *execComposeCommandRunner) Run(ctx context.Context, name string, args []string, workingDir string, env []string, runCtx composeRunContext) (*CommandResult, error) {
+	command := append([]string{name}, args...)
+	if runCtx.LogManager != nil {
+		return runCtx.LogManager.RunCommand(ctx, command, workingDir, runCtx.DeploymentUID, runCtx.ServiceUID, runCtx.LogType, env)
+	}
+
 	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.Dir = workingDir
 	if len(env) > 0 {
@@ -35,22 +48,38 @@ func (r *execComposeCommandRunner) Run(ctx context.Context, name string, args []
 	cmd.Stderr = &output
 
 	err := cmd.Run()
-	return output.String(), err
+	exitCode := 0
+	if err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			exitCode = exitErr.ExitCode()
+		} else {
+			return nil, err
+		}
+	}
+
+	return &CommandResult{
+		Stdout:   output.String(),
+		Stderr:   output.String(),
+		ExitCode: exitCode,
+	}, nil
 }
 
 // DockerComposeServiceImpl coordinates docker compose deployments.
 type DockerComposeServiceImpl struct {
-	logger *logger.Logger
-	runner composeCommandRunner
+	logger     *logger.Logger
+	runner     composeCommandRunner
+	logManager *deploymentLogManager
 }
 
 var composeServiceNamePattern = regexp.MustCompile(`^[A-Za-z0-9][-_A-Za-z0-9]*$`)
 
 // NewDockerComposeService constructs a docker compose deployment service.
 func NewDockerComposeService(baseLogger *logger.Logger) *DockerComposeServiceImpl {
+	serviceLogger := baseLogger.With("service", "docker_compose")
 	return &DockerComposeServiceImpl{
-		logger: baseLogger.With("service", "docker_compose"),
-		runner: &execComposeCommandRunner{},
+		logger:     serviceLogger,
+		runner:     &execComposeCommandRunner{},
+		logManager: newDeploymentLogManager(serviceLogger),
 	}
 }
 
@@ -65,11 +94,70 @@ func (s *DockerComposeServiceImpl) WithRunner(r composeCommandRunner) *DockerCom
 // Deploy executes a docker compose deployment using the provided request data.
 func (s *DockerComposeServiceImpl) Deploy(ctx context.Context, req *types.DockerComposeDeploymentRequest) (*types.DeploymentResult, error) {
 	if req == nil {
-		return &types.DeploymentResult{Success: false, Error: "deployment request is nil"}, fmt.Errorf("docker compose deployment request is nil")
+		return &types.DeploymentResult{Success: false, Error: "deployment request is nil"}, errors.New("docker compose deployment request is nil")
 	}
 
 	if req.SourcePath == "" {
-		return &types.DeploymentResult{Success: false, Error: "source path is required"}, fmt.Errorf("source path is required")
+		return &types.DeploymentResult{Success: false, Error: "source path is required"}, errors.New("source path is required")
+	}
+
+	serviceUID := strings.TrimSpace(req.ServiceUID)
+	deploymentUID := strings.TrimSpace(req.DeploymentUID)
+
+	stepTemplates := []types.DeploymentStep{
+		{
+			ID:          deploymentStepInitialize,
+			Name:        "Prepare deployment",
+			Description: "Validating compose configuration",
+			Status:      types.DeploymentStepStatusPending,
+			LogType:     "deploy",
+		},
+		{
+			ID:          deploymentStepBuildImage,
+			Name:        "Build compose project",
+			Description: "Running docker compose commands",
+			Status:      types.DeploymentStepStatusPending,
+			LogType:     "build",
+		},
+		{
+			ID:          deploymentStepDeployImage,
+			Name:        "Finalize deployment",
+			Description: "Applying PulseUp labels",
+			Status:      types.DeploymentStepStatusPending,
+			LogType:     "deploy",
+		},
+	}
+
+	stepTracker := s.logManager.NewStepTracker(serviceUID, deploymentUID, stepTemplates...)
+
+	startStep := func(stepID, name, description, logType string) {
+		if stepTracker != nil {
+			stepTracker.StartStep(stepID, name, description, logType)
+		}
+	}
+
+	appendStepLog := func(stepID, level, message string) {
+		if stepTracker != nil {
+			stepTracker.AppendLog(stepID, level, message)
+		}
+	}
+
+	failStep := func(stepID, message string) {
+		if stepTracker != nil {
+			stepTracker.FailStep(stepID, message)
+		}
+	}
+
+	completeStep := func(stepID string) {
+		if stepTracker != nil {
+			stepTracker.CompleteStep(stepID)
+		}
+	}
+
+	logDeploy := func(level, message string) {
+		if s.logManager != nil {
+			s.logManager.AppendDeploymentLog(serviceUID, deploymentUID, level, message)
+		}
 	}
 
 	composeFile := strings.TrimSpace(req.ComposeFile)
@@ -80,27 +168,51 @@ func (s *DockerComposeServiceImpl) Deploy(ctx context.Context, req *types.Docker
 	absSource := filepath.Clean(req.SourcePath)
 	absCompose := filepath.Join(absSource, filepath.Clean(composeFile))
 
+	startStep(deploymentStepInitialize, "Prepare deployment", "Validating compose configuration", "deploy")
+	logDeploy("INFO", fmt.Sprintf("Starting Docker Compose deployment using %s", composeFile))
+	appendStepLog(deploymentStepInitialize, "INFO", fmt.Sprintf("Using compose file %s", absCompose))
+
 	rel, err := filepath.Rel(absSource, absCompose)
 	if err != nil || strings.HasPrefix(rel, "..") {
-		return &types.DeploymentResult{Success: false, Error: "compose file path escapes repository"}, fmt.Errorf("compose file path must reside within repository")
+		errorMsg := "compose file path escapes repository"
+		logDeploy("ERROR", errorMsg)
+		failStep(deploymentStepInitialize, errorMsg)
+		return &types.DeploymentResult{Success: false, Error: errorMsg}, errors.New(errorMsg)
 	}
 
 	if _, err := os.Stat(absCompose); err != nil {
 		if os.IsNotExist(err) {
-			return &types.DeploymentResult{Success: false, Error: fmt.Sprintf("compose file %s not found", composeFile)}, fmt.Errorf("compose file not found: %s", composeFile)
+			errorMsg := fmt.Sprintf("compose file %s not found", composeFile)
+			logDeploy("ERROR", errorMsg)
+			failStep(deploymentStepInitialize, errorMsg)
+			return &types.DeploymentResult{Success: false, Error: errorMsg}, errors.New(errorMsg)
 		}
-		return &types.DeploymentResult{Success: false, Error: err.Error()}, fmt.Errorf("failed to stat compose file: %w", err)
+		errorMsg := fmt.Sprintf("failed to stat compose file: %v", err)
+		logDeploy("ERROR", errorMsg)
+		failStep(deploymentStepInitialize, errorMsg)
+		return &types.DeploymentResult{Success: false, Error: err.Error()}, errors.New(errorMsg)
 	}
 
 	projectName := strings.TrimSpace(req.ProjectName)
 	if projectName == "" {
 		projectName = fmt.Sprintf("pulseup-%s", req.ServiceUID)
+		appendStepLog(deploymentStepInitialize, "INFO", fmt.Sprintf("Defaulting project name to %s", projectName))
 	}
 
 	env := append(os.Environ(), formatEnv(req.Environment)...)
 
 	composeFiles := s.collectComposeFiles(absCompose)
 	validatedComposeFiles, availableServices := s.validateComposeFiles(ctx, absSource, projectName, composeFiles, env)
+	appendStepLog(deploymentStepInitialize, "INFO", fmt.Sprintf("Validated %d compose file(s)", len(validatedComposeFiles)))
+
+	primaryService, restrictServices, selectionErr := s.determineComposeService(req, availableServices)
+	if selectionErr != nil {
+		errorMsg := selectionErr.Error()
+		logDeploy("ERROR", errorMsg)
+		failStep(deploymentStepInitialize, errorMsg)
+		return &types.DeploymentResult{Success: false, Error: errorMsg}, selectionErr
+	}
+	appendStepLog(deploymentStepInitialize, "INFO", fmt.Sprintf("Deploying compose service: %s", primaryService))
 
 	labelsViaOverride := false
 	var (
@@ -108,20 +220,20 @@ func (s *DockerComposeServiceImpl) Deploy(ctx context.Context, req *types.Docker
 		overrideCleanup func()
 	)
 
-	targetServices := s.resolveLabelTargets(req, availableServices)
-	if len(targetServices) > 0 {
-		var overrideErr error
-		overridePath, overrideCleanup, overrideErr = s.createLabelOverrideFile(absSource, targetServices, req.ServiceUID, req.DeploymentUID)
-		if overrideErr != nil {
-			s.logger.Warn("Failed to prepare compose label override", "error", overrideErr)
-		} else if overridePath != "" {
-			labelsViaOverride = true
-			defer func() {
-				if overrideCleanup != nil {
-					overrideCleanup()
-				}
-			}()
-		}
+	targetServices := []string{primaryService}
+	var overrideErr error
+	overridePath, overrideCleanup, overrideErr = s.createLabelOverrideFile(absSource, targetServices, req.ServiceUID, req.DeploymentUID, req.PortMappings)
+	if overrideErr != nil {
+		s.logger.Warn("Failed to prepare compose label override", "error", overrideErr)
+		appendStepLog(deploymentStepInitialize, "WARN", fmt.Sprintf("Label override creation failed: %v", overrideErr))
+	} else if overridePath != "" {
+		labelsViaOverride = true
+		appendStepLog(deploymentStepInitialize, "INFO", fmt.Sprintf("Prepared label override file %s", overridePath))
+		defer func() {
+			if overrideCleanup != nil {
+				overrideCleanup()
+			}
+		}()
 	}
 
 	actualComposeFiles := append([]string{}, validatedComposeFiles...)
@@ -129,39 +241,76 @@ func (s *DockerComposeServiceImpl) Deploy(ctx context.Context, req *types.Docker
 		actualComposeFiles = append(actualComposeFiles, overridePath)
 	}
 
+	appendStepLog(deploymentStepInitialize, "INFO", fmt.Sprintf("Final compose file set: %v", actualComposeFiles))
+	completeStep(deploymentStepInitialize)
+
+	startStep(deploymentStepBuildImage, "Build compose project", "Running docker compose commands", "build")
+	appendStepLog(deploymentStepBuildImage, "INFO", "Stopping any existing compose services")
+	logDeploy("INFO", "Stopping existing compose services (docker compose down)")
+
 	downArgs := s.buildComposeArgs(projectName, actualComposeFiles)
 	downArgs = append(downArgs, "down", "--remove-orphans")
-	if output, err := s.runner.Run(ctx, "docker", downArgs, absSource, env); err != nil {
-		s.logger.Warn("docker compose down failed", "error", err, "output", output)
-		return &types.DeploymentResult{Success: false, Error: fmt.Sprintf("docker compose down failed: %v", err)}, err
+	downResult, err := s.runDockerCommand(ctx, downArgs, absSource, env, serviceUID, deploymentUID, "deploy")
+	if err != nil {
+		errorMsg := fmt.Sprintf("docker compose down failed: %v", err)
+		s.logger.Warn("docker compose down failed", "error", err)
+		logDeploy("ERROR", errorMsg)
+		failStep(deploymentStepBuildImage, errorMsg)
+		return &types.DeploymentResult{Success: false, Error: errorMsg}, errors.New(errorMsg)
 	}
+	if downResult.ExitCode != 0 {
+		errorMsg := fmt.Sprintf("docker compose down exited with code %d", downResult.ExitCode)
+		s.logger.Warn("docker compose down returned non-zero", "exit_code", downResult.ExitCode)
+		logDeploy("ERROR", errorMsg)
+		failStep(deploymentStepBuildImage, errorMsg)
+		return &types.DeploymentResult{Success: false, Error: errorMsg}, errors.New(errorMsg)
+	}
+
+	appendStepLog(deploymentStepBuildImage, "INFO", "Existing compose services stopped")
+	appendStepLog(deploymentStepBuildImage, "INFO", "Running docker compose up --build")
+	logDeploy("INFO", "Running docker compose up --build")
 
 	upArgs := s.buildComposeArgs(projectName, actualComposeFiles)
 	upArgs = append(upArgs, "up", "-d", "--build")
-	if strings.EqualFold(req.ServiceMode, "selected") && len(req.SelectedServices) > 0 {
-		for _, service := range req.SelectedServices {
-			trimmed := strings.TrimSpace(service)
-			if trimmed != "" {
-				upArgs = append(upArgs, trimmed)
-			}
-		}
+	if restrictServices && primaryService != "" {
+		upArgs = append(upArgs, primaryService)
 	}
 
-	output, err := s.runner.Run(ctx, "docker", upArgs, absSource, env)
+	upResult, err := s.runDockerCommand(ctx, upArgs, absSource, env, serviceUID, deploymentUID, "build")
 	if err != nil {
-		s.logger.Error("docker compose up failed", "error", err, "output", output)
-		return &types.DeploymentResult{Success: false, Error: fmt.Sprintf("docker compose up failed: %v", err)}, err
+		errorMsg := fmt.Sprintf("docker compose up failed: %v", err)
+		s.logger.Error("docker compose up failed", "error", err)
+		logDeploy("ERROR", errorMsg)
+		failStep(deploymentStepBuildImage, errorMsg)
+		return &types.DeploymentResult{Success: false, Error: errorMsg}, err
+	}
+	if upResult.ExitCode != 0 {
+		errorMsg := fmt.Sprintf("docker compose up exited with code %d", upResult.ExitCode)
+		s.logger.Error("docker compose up returned non-zero", "exit_code", upResult.ExitCode, "stderr", upResult.Stderr)
+		logDeploy("ERROR", errorMsg)
+		failStep(deploymentStepBuildImage, errorMsg)
+		return &types.DeploymentResult{Success: false, Error: errorMsg}, fmt.Errorf(errorMsg)
 	}
 
-	// If we couldn't inject labels via override, fall back to direct labeling
+	appendStepLog(deploymentStepBuildImage, "INFO", "docker compose up completed successfully")
+	completeStep(deploymentStepBuildImage)
+	if s.logManager != nil {
+		s.logManager.AppendLogEntry(serviceUID, deploymentUID, "build", "INFO", "docker compose up completed successfully")
+	}
+
+	startStep(deploymentStepDeployImage, "Finalize deployment", "Applying PulseUp labels", "deploy")
 	if !labelsViaOverride {
+		appendStepLog(deploymentStepDeployImage, "INFO", "Applying PulseUp labels to compose containers")
 		if err := s.labelComposeContainers(ctx, projectName, req.ServiceUID, req.DeploymentUID); err != nil {
 			s.logger.Warn("Failed to add PulseUp labels to compose containers", "error", err)
-			// Don't fail the deployment if labeling fails, but log it
+			appendStepLog(deploymentStepDeployImage, "WARN", fmt.Sprintf("Failed to label containers: %v", err))
 		}
+	} else {
+		appendStepLog(deploymentStepDeployImage, "INFO", "PulseUp labels applied via override file")
 	}
 
-	s.logger.Info("docker compose deployment completed", "project", projectName, "compose_file", composeFile)
+	completeStep(deploymentStepDeployImage)
+	logDeploy("INFO", fmt.Sprintf("docker compose deployment completed for project %s", projectName))
 
 	return &types.DeploymentResult{
 		Success:         true,
@@ -190,12 +339,12 @@ func (s *DockerComposeServiceImpl) labelComposeContainers(ctx context.Context, p
 	// Find all containers with the compose project label
 	listArgs := []string{"ps", "-a", "-q", "--filter", fmt.Sprintf("label=com.docker.compose.project=%s", projectName)}
 
-	output, err := s.runner.Run(ctx, "docker", listArgs, ".", nil)
+	result, err := s.runDockerCommand(ctx, listArgs, ".", nil, serviceUID, deploymentUID, "")
 	if err != nil {
 		return fmt.Errorf("failed to list compose containers: %w", err)
 	}
 
-	containerIDs := strings.Fields(strings.TrimSpace(output))
+	containerIDs := strings.Fields(strings.TrimSpace(result.Stdout))
 	if len(containerIDs) == 0 {
 		s.logger.Warn("No containers found for compose project", "project", projectName)
 		return nil
@@ -218,7 +367,7 @@ func (s *DockerComposeServiceImpl) labelComposeContainers(ctx context.Context, p
 			containerID,
 		}
 
-		_, err := s.runner.Run(ctx, "docker", labelArgs, ".", nil)
+		_, err := s.runDockerCommand(ctx, labelArgs, ".", nil, serviceUID, deploymentUID, "deploy")
 		if err != nil {
 			// The --label-add flag might not be supported in older Docker versions
 			// In this case, we log a warning but don't fail the deployment
@@ -234,24 +383,59 @@ func (s *DockerComposeServiceImpl) labelComposeContainers(ctx context.Context, p
 	return nil
 }
 
-func (s *DockerComposeServiceImpl) resolveLabelTargets(req *types.DockerComposeDeploymentRequest, availableServices []string) []string {
-	if strings.EqualFold(req.ServiceMode, "selected") && len(req.SelectedServices) > 0 {
-		return normalizeServiceNames(req.SelectedServices)
+func (s *DockerComposeServiceImpl) determineComposeService(req *types.DockerComposeDeploymentRequest, availableServices []string) (string, bool, error) {
+	normalizedAvailable := normalizeServiceNames(availableServices)
+	if len(normalizedAvailable) == 0 {
+		return "", false, fmt.Errorf("no services defined in docker compose configuration")
 	}
 
-	return normalizeServiceNames(availableServices)
+	if len(normalizedAvailable) == 1 {
+		svc := normalizedAvailable[0]
+		if len(req.SelectedServices) > 0 {
+			normalizedSelected := normalizeServiceNames(req.SelectedServices)
+			if len(normalizedSelected) > 1 {
+				return "", false, fmt.Errorf("multiple services selected but only one is supported")
+			}
+			if len(normalizedSelected) == 1 && !strings.EqualFold(normalizedSelected[0], svc) {
+				return "", false, fmt.Errorf("selected service %s not found in compose file", normalizedSelected[0])
+			}
+		}
+		return svc, false, nil
+	}
+
+	normalizedSelected := normalizeServiceNames(req.SelectedServices)
+	if len(normalizedSelected) == 0 {
+		if strings.EqualFold(strings.TrimSpace(req.ServiceMode), "all") {
+			return "", false, fmt.Errorf("multiple services detected in compose file; select exactly one service to deploy")
+		}
+		return "", false, fmt.Errorf("select exactly one service to deploy from your compose file")
+	}
+	if len(normalizedSelected) > 1 {
+		return "", false, fmt.Errorf("multiple services selected but only one is supported")
+	}
+
+	selected := normalizedSelected[0]
+	availableMap := make(map[string]string, len(normalizedAvailable))
+	for _, svc := range normalizedAvailable {
+		availableMap[strings.ToLower(svc)] = svc
+	}
+	if canonical, exists := availableMap[strings.ToLower(selected)]; exists {
+		return canonical, true, nil
+	}
+
+	return "", false, fmt.Errorf("selected service %s not found in compose file", selected)
 }
 
 func (s *DockerComposeServiceImpl) listComposeServices(ctx context.Context, workDir string, composeFiles []string, projectName string, env []string) ([]string, error) {
 	args := s.buildComposeArgs(projectName, composeFiles)
 	args = append(args, "config", "--services")
 
-	output, err := s.runner.Run(ctx, "docker", args, workDir, env)
+	result, err := s.runDockerCommand(ctx, args, workDir, env, "", "", "")
 	if err != nil {
 		return nil, fmt.Errorf("failed to enumerate compose services: %w", err)
 	}
 
-	lines := strings.Split(strings.TrimSpace(output), "\n")
+	lines := strings.Split(strings.TrimSpace(result.Stdout), "\n")
 	services := make([]string, 0, len(lines))
 	for _, line := range lines {
 		trimmed := strings.TrimSpace(line)
@@ -296,23 +480,50 @@ func normalizeServiceNames(names []string) []string {
 	return result
 }
 
-func (s *DockerComposeServiceImpl) createLabelOverrideFile(workDir string, services []string, serviceUID, deploymentUID string) (string, func(), error) {
+func (s *DockerComposeServiceImpl) runDockerCommand(ctx context.Context, args []string, workDir string, env []string, serviceUID, deploymentUID, logType string) (*CommandResult, error) {
+	if s.runner == nil {
+		if s.logManager != nil {
+			return s.logManager.RunCommand(ctx, append([]string{"docker"}, args...), workDir, deploymentUID, serviceUID, logType, env)
+		}
+		return (&execComposeCommandRunner{}).Run(ctx, "docker", args, workDir, env, composeRunContext{})
+	}
+
+	return s.runner.Run(ctx, "docker", args, workDir, env, composeRunContext{
+		LogManager:    s.logManager,
+		ServiceUID:    serviceUID,
+		DeploymentUID: deploymentUID,
+		LogType:       logType,
+	})
+}
+
+func (s *DockerComposeServiceImpl) createLabelOverrideFile(workDir string, services []string, serviceUID, deploymentUID string, portMappings []types.PortMapping) (string, func(), error) {
 	normalized := normalizeServiceNames(services)
 	if len(normalized) == 0 {
 		return "", nil, nil
 	}
 
-	type serviceLabels struct {
-		Labels map[string]string `yaml:"labels"`
+	overridePorts := buildComposePortOverrides(portMappings)
+
+	type serviceOverride struct {
+		Labels map[string]string `yaml:"labels,omitempty"`
+		Ports  []string          `yaml:"ports,omitempty"`
 	}
 
-	servicesMap := make(map[string]serviceLabels, len(normalized))
+	servicesMap := make(map[string]serviceOverride, len(normalized))
+	portsAssigned := false
 	for _, svc := range normalized {
-		servicesMap[svc] = serviceLabels{Labels: map[string]string{
-			"pulseup.managed":        "true",
-			"pulseup.service_uid":    serviceUID,
-			"pulseup.deployment_uid": deploymentUID,
-		}}
+		override := serviceOverride{
+			Labels: map[string]string{
+				"pulseup.managed":        "true",
+				"pulseup.service_uid":    serviceUID,
+				"pulseup.deployment_uid": deploymentUID,
+			},
+		}
+		if !portsAssigned && len(overridePorts) > 0 {
+			override.Ports = overridePorts
+			portsAssigned = true
+		}
+		servicesMap[svc] = override
 	}
 
 	composeOverride := map[string]interface{}{
@@ -349,6 +560,30 @@ func (s *DockerComposeServiceImpl) createLabelOverrideFile(workDir string, servi
 	}
 
 	return file.Name(), cleanup, nil
+}
+
+func buildComposePortOverrides(portMappings []types.PortMapping) []string {
+	if len(portMappings) == 0 {
+		return nil
+	}
+
+	ports := make([]string, 0, len(portMappings))
+	for _, mapping := range portMappings {
+		if mapping.Internal <= 0 {
+			continue
+		}
+
+		if mapping.External > 0 {
+			ports = append(ports, fmt.Sprintf("%d:%d", mapping.External, mapping.Internal))
+		} else {
+			ports = append(ports, fmt.Sprintf("%d", mapping.Internal))
+		}
+	}
+
+	if len(ports) == 0 {
+		return nil
+	}
+	return ports
 }
 
 func (s *DockerComposeServiceImpl) collectComposeFiles(baseCompose string) []string {

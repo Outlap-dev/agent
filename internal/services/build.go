@@ -149,8 +149,10 @@ func (b *BuildServiceImpl) buildWithDockerfile(ctx context.Context, config *type
 	}
 
 	// Add build args if provided
+	extraEnv := make([]string, 0, len(config.Environment))
 	for key, value := range config.Environment {
-		args = append(args, "--build-arg", fmt.Sprintf("%s=%s", key, value))
+		args = append(args, "--build-arg", key)
+		extraEnv = append(extraEnv, fmt.Sprintf("%s=%s", key, value))
 	}
 
 	args = append(args, config.SourcePath)
@@ -158,6 +160,9 @@ func (b *BuildServiceImpl) buildWithDockerfile(ctx context.Context, config *type
 	// Execute docker build
 	cmd := exec.CommandContext(ctx, "docker", args...)
 	cmd.Dir = appDir
+	if len(extraEnv) > 0 {
+		cmd.Env = append(os.Environ(), extraEnv...)
+	}
 
 	output, err := cmd.CombinedOutput()
 	if err != nil {
@@ -229,7 +234,7 @@ func (b *BuildServiceImpl) DeployApplication(ctx context.Context, config *types.
 	hostConfig := &container.HostConfig{
 		PortBindings: portBindings,
 		RestartPolicy: container.RestartPolicy{
-			Name: "unless-stopped",
+			Name: "no",
 		},
 	}
 

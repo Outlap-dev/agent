@@ -7,6 +7,7 @@ import (
 	"syscall"
 
 	"pulseup-agent-go/internal/config"
+	"pulseup-agent-go/internal/ipc"
 	"pulseup-agent-go/internal/services"
 	"pulseup-agent-go/pkg/logger"
 )
@@ -74,12 +75,34 @@ type PulseUpAgent struct {
 	logger    *logger.Logger
 	config    *config.Config
 	container *services.ServiceContainer
+	ipcClient *ipc.Client
 }
 
 func (a *PulseUpAgent) Setup(ctx context.Context) error {
+	// Attempt to connect to supervisor for privileged operations
+	socketConfig := ipc.DefaultSocketConfig()
+	candidateClient := ipc.NewClient(socketConfig, a.logger)
+	if err := candidateClient.Connect(ctx); err != nil {
+		a.logger.Warn("Supervisor IPC unavailable; privileged operations will fall back to local execution", "error", err)
+	} else {
+		a.ipcClient = candidateClient
+	}
+
 	// Initialize service container
-	container, err := services.NewServiceContainer(a.config, a.logger)
+	var (
+		container *services.ServiceContainer
+		err       error
+	)
+	if a.ipcClient != nil {
+		container, err = services.NewServiceContainerWithIPC(a.config, a.logger, a.ipcClient)
+	} else {
+		container, err = services.NewServiceContainer(a.config, a.logger)
+	}
 	if err != nil {
+		if a.ipcClient != nil {
+			a.ipcClient.Disconnect()
+			a.ipcClient = nil
+		}
 		return err
 	}
 	a.container = container
@@ -100,8 +123,21 @@ func (a *PulseUpAgent) Run(ctx context.Context) error {
 }
 
 func (a *PulseUpAgent) Shutdown(ctx context.Context) error {
+	var shutdownErr error
 	if a.container != nil {
-		return a.container.Shutdown(ctx)
+		shutdownErr = a.container.Shutdown(ctx)
 	}
-	return nil
+
+	if a.ipcClient != nil {
+		if err := a.ipcClient.Disconnect(); err != nil {
+			if shutdownErr == nil {
+				shutdownErr = err
+			} else {
+				a.logger.Error("Failed to disconnect from supervisor during shutdown", "error", err)
+			}
+		}
+		a.ipcClient = nil
+	}
+
+	return shutdownErr
 }

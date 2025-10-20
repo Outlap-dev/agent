@@ -3,6 +3,8 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"os"
+	"path/filepath"
 
 	"pulseup-agent-go/internal/update"
 	"pulseup-agent-go/pkg/logger"
@@ -42,15 +44,21 @@ func (h *UpdateHandler) Check(ctx context.Context, _ json.RawMessage) (*types.Co
 	}
 
 	responseData := map[string]interface{}{
-		"current_version":  update.CurrentVersion.String(),
+		"current_version":  update.GetCurrentVersion().String(),
 		"update_available": metadata != nil,
 	}
 
 	if metadata != nil {
 		responseData["latest_version"] = metadata.Version
-		responseData["download_url"] = metadata.URL
+		responseData["download_url"] = metadata.DownloadURL
 		responseData["changelog"] = metadata.Changelog
 		responseData["signed_at"] = metadata.SignedAt
+		responseData["checksum"] = metadata.SHA256
+		responseData["signature"] = metadata.Signature
+		responseData["checksum_manifest"] = metadata.ChecksumManifest
+		if metadata.ReleaseURL != "" {
+			responseData["release_url"] = metadata.ReleaseURL
+		}
 	}
 
 	return &types.CommandResponse{Success: true, Data: responseData}, nil
@@ -104,13 +112,14 @@ func (h *UpdateHandler) Apply(ctx context.Context, data json.RawMessage) (*types
 		h.logger.Error("Failed to download update", "error", err)
 		return &types.CommandResponse{Success: false, Error: "Failed to download update: " + err.Error()}, nil
 	}
+	defer os.RemoveAll(filepath.Dir(updateFile))
 
 	if err := updateService.ValidateUpdate(ctx, updateFile, metadata); err != nil {
 		h.logger.Error("Update validation failed", "error", err)
 		return &types.CommandResponse{Success: false, Error: "Update validation failed: " + err.Error()}, nil
 	}
 
-	if err := updateService.ApplyUpdate(ctx, updateFile); err != nil {
+	if err := updateService.ApplyUpdate(ctx, metadata, updateFile); err != nil {
 		h.logger.Error("Failed to apply update", "error", err)
 		return &types.CommandResponse{Success: false, Error: "Failed to apply update: " + err.Error()}, nil
 	}

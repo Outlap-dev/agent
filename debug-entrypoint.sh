@@ -1,25 +1,83 @@
 #!/bin/bash
 
 # Check if Docker socket is mounted (indicating we should use host Docker)
-if [ -S /var/run/docker.sock ]; then
-    echo "Docker socket detected, using host Docker daemon"
+ensure_caddy_permissions() {
+    local caddy_root="/etc/pulseup-agent/caddy"
+    local caddy_dirs=("$caddy_root" "$caddy_root/config" "$caddy_root/data" "$caddy_root/logs")
+    local additional_dirs=("/var/lib/caddy" "/var/log/caddy")
+
+    for dir in "${caddy_dirs[@]}" "${additional_dirs[@]}"; do
+        if ! mkdir -p "$dir" 2>/dev/null; then
+            echo "Warning: failed to create $dir"
+        fi
+    done
+
+    # Set ownership so the pulseup-worker process can manage domain state files
+    if ! chown -R pulseup-worker:pulseup-worker "$caddy_root" /var/lib/caddy /var/log/caddy 2>/dev/null; then
+        echo "Warning: failed to adjust ownership for Caddy directories"
+    fi
+
+    # Ensure group write permissions so agent updates can succeed even if directories already exist
+    chmod -R g+rwX "$caddy_root" /var/lib/caddy /var/log/caddy 2>/dev/null || true
+}
+
+SOCKET_PATH=${DOCKER_SOCKET_PATH:-/var/run/docker.sock}
+SOCKET_DIR=$(dirname "$SOCKET_PATH")
+
+if [ -S "$SOCKET_PATH" ]; then
+    echo "Docker socket detected at $SOCKET_PATH, using host Docker daemon"
+    export DOCKER_HOST=${DOCKER_HOST:-unix://$SOCKET_PATH}
+    if [[ "$SOCKET_DIR" == /run/user/* ]] && [ -z "$XDG_RUNTIME_DIR" ]; then
+        export XDG_RUNTIME_DIR="$SOCKET_DIR"
+        echo "Detected rootless Docker runtime; exporting XDG_RUNTIME_DIR=$XDG_RUNTIME_DIR"
+    fi
     
     # Fix Docker socket permissions for the docker group
-    if [ -S /var/run/docker.sock ]; then
-        echo "Setting Docker socket group ownership..."
-        chgrp docker /var/run/docker.sock 2>/dev/null || echo "Note: Could not change group ownership (may already be correct)"
-        chmod g+rw /var/run/docker.sock 2>/dev/null || echo "Note: Could not change permissions (may already be correct)" 
+    if [ -S "$SOCKET_PATH" ]; then
+        SOCK_GID=$(stat -c '%g' "$SOCKET_PATH")
+        SOCK_GROUP_NAME=$(getent group "$SOCK_GID" | cut -d: -f1)
+        if [ -z "$SOCK_GROUP_NAME" ]; then
+            SOCK_GROUP_NAME="pulseup-docker-$SOCK_GID"
+            groupadd -g "$SOCK_GID" "$SOCK_GROUP_NAME" 2>/dev/null || true
+        fi
+        if [ -n "$SOCK_GROUP_NAME" ]; then
+            usermod -aG "$SOCK_GROUP_NAME" pulseup-worker 2>/dev/null || true
+            usermod -aG "$SOCK_GROUP_NAME" root 2>/dev/null || true
+        fi
+        if [ -n "$SOCK_GROUP_NAME" ]; then
+            chgrp "$SOCK_GROUP_NAME" "$SOCKET_PATH" 2>/dev/null || echo "Note: Could not change group ownership (may already be correct)"
+        fi
+        chmod g+rw "$SOCKET_PATH" 2>/dev/null || echo "Note: Could not change permissions (may already be correct)" 
     fi
     
     # Test if Docker is accessible
     if ! docker info >/dev/null 2>&1; then
-        echo "Warning: Docker socket mounted but Docker daemon not accessible"
-        echo "This is normal on some systems - continuing..."
+        DOCKER_INFO_OUTPUT=$(docker info 2>&1 || true)
+        if echo "$DOCKER_INFO_OUTPUT" | grep -qi "permission denied"; then
+            echo "Permission denied when accessing Docker socket as root. Retrying as pulseup-worker user..."
+            if sudo -E -H -u pulseup-worker docker info >/dev/null 2>&1; then
+                echo "Docker daemon accessible as pulseup-worker user"
+            else
+                echo "Docker socket mounted but inaccessible – starting internal Docker daemon fallback"
+                export DOCKERD_HOST="unix:///var/run/pulseup-dind.sock"
+                export DOCKER_HOST="$DOCKERD_HOST"
+                /usr/local/bin/dind-entrypoint.sh &
+                while ! docker info >/dev/null 2>&1; do
+                    echo "Waiting for internal Docker daemon..."
+                    sleep 1
+                done
+                echo "Internal Docker daemon is ready"
+            fi
+        else
+            echo "Warning: Docker socket mounted but Docker daemon not accessible"
+            echo "$DOCKER_INFO_OUTPUT"
+            echo "Continuing without Docker connectivity..."
+        fi
     else
         echo "Docker daemon is ready"
     fi
 else
-    echo "No Docker socket detected, starting Docker daemon in container"
+    echo "No Docker socket detected at $SOCKET_PATH, starting Docker daemon in container"
     # Start the Docker daemon first
     /usr/local/bin/dind-entrypoint.sh &
     
@@ -31,6 +89,9 @@ else
     
     echo "Docker daemon is ready"
 fi
+
+# Ensure runtime directories (especially mounted volumes) have the right ownership
+ensure_caddy_permissions
 
 # Signal handler for graceful shutdown
 shutdown() {

@@ -95,8 +95,6 @@ func (h *MonitoringHandler) SetupAlerts(ctx context.Context, data json.RawMessag
 }
 
 func (h *MonitoringHandler) Start(ctx context.Context, _ json.RawMessage) (*types.CommandResponse, error) {
-	h.logger.Info("Starting monitoring collection")
-
 	monitoringService := h.services.GetMonitoringService()
 	if monitoringService == nil {
 		return &types.CommandResponse{Success: false, Error: "monitoring service not available"}, nil

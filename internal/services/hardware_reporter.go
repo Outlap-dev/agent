@@ -51,10 +51,6 @@ func (r *HardwareReporter) Report(ctx context.Context) error {
 		return err
 	}
 
-	r.logger.Info("Sent hardware info to backend",
-		"hostname", payload["hostname"],
-		"public_ip", payload["ip_address"],
-	)
 	return nil
 }
 
@@ -64,9 +60,16 @@ func BuildHardwarePayload(info *types.HardwareInfo) map[string]interface{} {
 	}
 
 	metadata := structToMap(info)
+	if metadata == nil {
+		metadata = map[string]interface{}{}
+	}
+	if info.Hostname != "" {
+		metadata["default_name"] = info.Hostname
+	}
 
 	return map[string]interface{}{
 		"hostname":       info.Hostname,
+		"default_name":   info.Hostname,
 		"ip_address":     info.PublicIP,
 		"private_ip":     info.PrimaryIP,
 		"cpu_model":      info.CPU.Model,

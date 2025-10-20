@@ -34,6 +34,11 @@ func RegisterServiceRoutes(router *Router, logger *logger.Logger, services handl
 		service.Controller("deploy", deploymentLogs).
 			Handle("logs.fetch", deploymentLogs.Fetch)
 
+		deploymentLogStream := handlers.NewDeploymentLogStreamHandler(logger, services)
+		service.Controller("deploy", deploymentLogStream).
+			Handle("logs.stream.start", deploymentLogStream.StreamStart).
+			Handle("logs.stream.stop", deploymentLogStream.StreamStop)
+
 		// Log management routes - single handler with multiple methods
 		logsHandler := handlers.NewServiceLogsHandler(logger, services)
 		service.Controller("logs", logsHandler).

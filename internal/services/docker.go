@@ -125,9 +125,7 @@ func (d *DockerServiceImpl) ListContainers(ctx context.Context) ([]pulseuptypes.
 	for _, cont := range containers {
 		// Extract service info from container
 		serviceName := cont.Names[0]
-		if strings.HasPrefix(serviceName, "/") {
-			serviceName = serviceName[1:] // Remove leading slash
-		}
+		serviceName = strings.TrimPrefix(serviceName, "/")
 
 		status := pulseuptypes.ServiceStatusStopped
 		if cont.State == "running" {

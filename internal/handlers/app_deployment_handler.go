@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -23,11 +24,12 @@ type appDeploymentStrategy interface {
 }
 
 type appDeploymentOptions struct {
-	Request   *types.DeployApplicationRequest
-	BuildInfo *types.BuildCommandInfo
-	ClonePath string
-	EnvVars   map[string]string
-	Networks  []string
+	Request      *types.DeployApplicationRequest
+	BuildInfo    *types.BuildCommandInfo
+	ClonePath    string
+	EnvVars      map[string]string
+	Networks     []string
+	PortMappings []types.PortMapping
 }
 
 // NewDeployApplicationHandler creates a new deployment handler
@@ -228,6 +230,27 @@ func (h *DeployApplicationHandler) Deploy(ctx context.Context, data json.RawMess
 		}
 	}
 
+	portMappings, primaryInternal, primaryExternal := h.resolvePortMappings(&request)
+	if len(portMappings) > 0 {
+		request.PortMappings = portMappings
+	}
+	if primaryInternal > 0 {
+		request.InternalPort = primaryInternal
+		envVars["PORT"] = strconv.Itoa(primaryInternal)
+	}
+	if primaryExternal > 0 {
+		request.ExposedPort = primaryExternal
+		envVars["PULSEUP_PRIMARY_EXTERNAL_PORT"] = strconv.Itoa(primaryExternal)
+	}
+
+	if len(portMappings) > 0 {
+		if encoded, err := json.Marshal(portMappings); err != nil {
+			h.logger.Warn("Failed to marshal port mappings", "error", err)
+		} else {
+			envVars["PULSEUP_PORT_MAPPINGS"] = string(encoded)
+		}
+	}
+
 	// Use Caddy network for deployment to avoid having to connect it later
 	networks := []string{"bridge"}
 	if caddyService := h.services.GetCaddyService(); caddyService != nil {
@@ -259,11 +282,12 @@ func (h *DeployApplicationHandler) Deploy(ctx context.Context, data json.RawMess
 	}
 
 	strategyOptions := &appDeploymentOptions{
-		Request:   &request,
-		BuildInfo: buildInfo,
-		ClonePath: clonePath,
-		EnvVars:   envVars,
-		Networks:  networks,
+		Request:      &request,
+		BuildInfo:    buildInfo,
+		ClonePath:    clonePath,
+		EnvVars:      envVars,
+		Networks:     networks,
+		PortMappings: portMappings,
 	}
 
 	deploymentResult, err = strategy.Deploy(ctx, strategyOptions)
@@ -493,6 +517,7 @@ func (h *DeployApplicationHandler) buildDockerComposeRequest(opts *appDeployment
 		SelectedServices: selectedServices,
 		ProjectName:      projectName,
 		Environment:      opts.EnvVars,
+		PortMappings:     opts.PortMappings,
 	}
 }
 
@@ -501,11 +526,22 @@ func (h *DeployApplicationHandler) buildDockerfileConfig(req *types.DeployApplic
 		return map[string]interface{}{}
 	}
 
-	return map[string]interface{}{
-		"cpu_limit":     req.CPULimit,
-		"memory_limit":  req.MemoryLimit,
-		"internal_port": req.InternalPort,
+	config := map[string]interface{}{
+		"cpu_limit":    req.CPULimit,
+		"memory_limit": req.MemoryLimit,
 	}
+
+	if req.InternalPort > 0 {
+		config["internal_port"] = req.InternalPort
+	}
+	if req.ExposedPort > 0 {
+		config["exposed_port"] = req.ExposedPort
+	}
+	if len(req.PortMappings) > 0 {
+		config["port_mappings"] = req.PortMappings
+	}
+
+	return config
 }
 
 func (h *DeployApplicationHandler) buildNixpacksPlanData(opts *appDeploymentOptions) map[string]interface{} {
@@ -525,6 +561,16 @@ func (h *DeployApplicationHandler) buildNixpacksPlanData(opts *appDeploymentOpti
 			for k, v := range req.NixpacksConfig {
 				planData[k] = v
 			}
+		}
+
+		if len(req.PortMappings) > 0 {
+			planData["port_mappings"] = req.PortMappings
+		}
+		if req.InternalPort > 0 {
+			planData["internal_port"] = req.InternalPort
+		}
+		if req.ExposedPort > 0 {
+			planData["exposed_port"] = req.ExposedPort
 		}
 
 		if req.Service != nil {
@@ -570,10 +616,184 @@ func (h *DeployApplicationHandler) buildNixpacksPlanData(opts *appDeploymentOpti
 	}
 
 	if opts != nil && len(opts.EnvVars) > 0 {
-		planData["env"] = opts.EnvVars
+		envMap := make(map[string]interface{}, len(opts.EnvVars))
+		for key, value := range opts.EnvVars {
+			envMap[key] = value
+		}
+		switch existing := planData["env"].(type) {
+		case map[string]interface{}:
+			for key, value := range envMap {
+				existing[key] = value
+			}
+		case map[string]string:
+			merged := make(map[string]interface{}, len(existing)+len(envMap))
+			for key, value := range existing {
+				merged[key] = value
+			}
+			for key, value := range envMap {
+				merged[key] = value
+			}
+			planData["env"] = merged
+		case nil:
+			planData["env"] = envMap
+		default:
+			planData["env"] = envMap
+		}
 	}
 
 	return planData
+}
+
+func (h *DeployApplicationHandler) resolvePortMappings(req *types.DeployApplicationRequest) ([]types.PortMapping, int, int) {
+	if req == nil {
+		return nil, 0, 0
+	}
+
+	collected := make([]types.PortMapping, 0, len(req.PortMappings))
+	if len(req.PortMappings) > 0 {
+		collected = append(collected, req.PortMappings...)
+	}
+
+	if len(collected) == 0 && req.Service != nil {
+		if raw, exists := req.Service["port_mappings"]; exists {
+			collected = append(collected, parsePortMappingsFromInterface(raw)...)
+		}
+	}
+
+	defaultInternal := req.InternalPort
+	if defaultInternal == 0 && req.Service != nil {
+		defaultInternal = extractInt(req.Service["internal_port"])
+	}
+
+	defaultExternal := req.ExposedPort
+	if defaultExternal == 0 && req.Service != nil {
+		defaultExternal = extractInt(req.Service["exposed_port"])
+		if defaultExternal == 0 {
+			defaultExternal = extractInt(req.Service["external_port"])
+		}
+	}
+
+	sanitized := sanitizePortMappings(collected)
+	if len(sanitized) == 0 && defaultInternal > 0 {
+		sanitized = []types.PortMapping{{External: defaultExternal, Internal: defaultInternal}}
+	}
+
+	primaryInternal := 0
+	primaryExternal := 0
+	if len(sanitized) > 0 {
+		primaryInternal = sanitized[0].Internal
+		primaryExternal = sanitized[0].External
+	} else {
+		primaryInternal = defaultInternal
+		primaryExternal = defaultExternal
+	}
+
+	return sanitized, primaryInternal, primaryExternal
+}
+
+func parsePortMappingsFromInterface(raw interface{}) []types.PortMapping {
+	switch value := raw.(type) {
+	case []types.PortMapping:
+		return value
+	case []map[string]interface{}:
+		result := make([]types.PortMapping, 0, len(value))
+		for _, item := range value {
+			result = append(result, mapToPortMapping(item))
+		}
+		return result
+	case []interface{}:
+		result := make([]types.PortMapping, 0, len(value))
+		for _, item := range value {
+			if mapping, ok := item.(map[string]interface{}); ok {
+				result = append(result, mapToPortMapping(mapping))
+			}
+		}
+		return result
+	case map[string]interface{}:
+		return []types.PortMapping{mapToPortMapping(value)}
+	case string:
+		var parsed []types.PortMapping
+		if err := json.Unmarshal([]byte(value), &parsed); err == nil {
+			return parsed
+		}
+	}
+	return nil
+}
+
+func mapToPortMapping(value map[string]interface{}) types.PortMapping {
+	return types.PortMapping{
+		External: extractInt(value["external"]),
+		Internal: extractInt(value["internal"]),
+	}
+}
+
+func sanitizePortMappings(mappings []types.PortMapping) []types.PortMapping {
+	if len(mappings) == 0 {
+		return nil
+	}
+
+	seen := make(map[int]struct{})
+	result := make([]types.PortMapping, 0, len(mappings))
+	for _, mapping := range mappings {
+		if mapping.Internal <= 0 || mapping.Internal > 65535 {
+			continue
+		}
+		if mapping.External < 0 || mapping.External > 65535 {
+			continue
+		}
+
+		key := mapping.External
+		if key == 0 {
+			key = -mapping.Internal
+		}
+		if _, exists := seen[key]; exists {
+			continue
+		}
+		seen[key] = struct{}{}
+		result = append(result, mapping)
+	}
+
+	return result
+}
+
+func extractInt(raw interface{}) int {
+	switch value := raw.(type) {
+	case nil:
+		return 0
+	case int:
+		return value
+	case int8:
+		return int(value)
+	case int16:
+		return int(value)
+	case int32:
+		return int(value)
+	case int64:
+		return int(value)
+	case uint:
+		return int(value)
+	case uint8:
+		return int(value)
+	case uint16:
+		return int(value)
+	case uint32:
+		return int(value)
+	case uint64:
+		return int(value)
+	case float32:
+		return int(value)
+	case float64:
+		return int(value)
+	case string:
+		trimmed := strings.TrimSpace(value)
+		if trimmed == "" {
+			return 0
+		}
+		if parsed, err := strconv.Atoi(trimmed); err == nil {
+			return parsed
+		}
+	}
+	return 0
 }
 
 func parseComposeSelectedServices(raw interface{}) []string {

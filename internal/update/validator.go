@@ -14,15 +14,9 @@ import (
 	"os"
 )
 
-// PublicKey is the embedded public key for verifying updates
-// This should be replaced with the actual PulseUp public key
+// Default embedded public key for verifying update signatures
 var EmbeddedPublicKey = `-----BEGIN PUBLIC KEY-----
-MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA0Z3VS5JJcds3xfn/ygWyF0qV
-BPr2iCsJKKjTbX2hLJqnPLcqrceaz2NJJBbORpMkNuJFdpCCFMKQbkUi6WJKEKiGQqU8
-5nNPmwwz4woyuiFjljMZqma0Fc6qPgvU0nm76L4XUbfej9GSN6kFDmuQfYYouSs3WRgO
-sV0bLu5s3BqAFkpOgFGkkWFmhWYdANM0xHDTXq6rvQnAzFEQHMNDzFekr2E2aFO5mPIx
-uFxqC3JQYUvVotwcGt2KN5hOmWWNyvZQJdCCdkXBq5hfXFLNpvXP9XJq0hBNSF9F8JIE
-h9AvmIjEnlsJ8npjLQW7KXPW6QvDlNDr0wIDAQAB
+MCowBQYDK2VwAyEAKgfda25+RtKnitigHboj2dT0RFpOQjCDnKoYzBTKgQ8=
 -----END PUBLIC KEY-----`
 
 type Validator struct {
@@ -34,7 +28,7 @@ func NewValidator(publicKeyPath string) (*Validator, error) {
 	v := &Validator{
 		publicKeyPath: publicKeyPath,
 	}
-	
+
 	// Try to load public key from file first
 	if publicKeyPath != "" {
 		if err := v.loadPublicKeyFromFile(); err != nil {
@@ -44,14 +38,14 @@ func NewValidator(publicKeyPath string) (*Validator, error) {
 			}
 		}
 	}
-	
+
 	// If no key loaded from file, use embedded key
 	if v.publicKey == nil {
 		if err := v.loadEmbeddedPublicKey(); err != nil {
 			return nil, fmt.Errorf("failed to load embedded public key: %w", err)
 		}
 	}
-	
+
 	return v, nil
 }
 
@@ -60,7 +54,7 @@ func (v *Validator) loadPublicKeyFromFile() error {
 	if err != nil {
 		return err
 	}
-	
+
 	return v.parsePublicKey(keyData)
 }
 
@@ -73,20 +67,22 @@ func (v *Validator) parsePublicKey(keyData []byte) error {
 	if block == nil {
 		return fmt.Errorf("failed to parse PEM block")
 	}
-	
-	// Try parsing as RSA key first
-	if rsaKey, err := x509.ParsePKIXPublicKey(block.Bytes); err == nil {
-		v.publicKey = rsaKey
-		return nil
+
+	parsed, err := x509.ParsePKIXPublicKey(block.Bytes)
+	if err != nil {
+		return fmt.Errorf("failed to parse public key: %w", err)
 	}
-	
-	// Try parsing as Ed25519 key
-	if ed25519Key, err := x509.ParsePKIXPublicKey(block.Bytes); err == nil {
-		v.publicKey = ed25519Key
-		return nil
+
+	switch key := parsed.(type) {
+	case *rsa.PublicKey:
+		v.publicKey = key
+	case ed25519.PublicKey:
+		v.publicKey = key
+	default:
+		return fmt.Errorf("unsupported public key type: %T", parsed)
 	}
-	
-	return fmt.Errorf("unsupported public key type")
+
+	return nil
 }
 
 // VerifySignature verifies the signature of the update metadata
@@ -95,12 +91,10 @@ func (v *Validator) VerifySignature(payload []byte, signatureB64 string) error {
 	if err != nil {
 		return fmt.Errorf("failed to decode signature: %w", err)
 	}
-	
-	// Calculate hash of payload
-	hash := sha256.Sum256(payload)
-	
+
 	switch key := v.publicKey.(type) {
 	case *rsa.PublicKey:
+		hash := sha256.Sum256(payload)
 		err = rsa.VerifyPKCS1v15(key, crypto.SHA256, hash[:], signature)
 		if err != nil {
 			return fmt.Errorf("RSA signature verification failed: %w", err)
@@ -112,7 +106,7 @@ func (v *Validator) VerifySignature(payload []byte, signatureB64 string) error {
 	default:
 		return fmt.Errorf("unsupported public key type: %T", v.publicKey)
 	}
-	
+
 	return nil
 }
 
@@ -123,17 +117,17 @@ func VerifyFileHash(filePath string, expectedHash string) error {
 		return fmt.Errorf("failed to open file: %w", err)
 	}
 	defer file.Close()
-	
+
 	hasher := sha256.New()
 	if _, err := io.Copy(hasher, file); err != nil {
 		return fmt.Errorf("failed to calculate hash: %w", err)
 	}
-	
+
 	calculatedHash := hex.EncodeToString(hasher.Sum(nil))
 	if calculatedHash != expectedHash {
 		return fmt.Errorf("hash mismatch: expected %s, got %s", expectedHash, calculatedHash)
 	}
-	
+
 	return nil
 }
 
@@ -144,11 +138,11 @@ func CalculateFileHash(filePath string) (string, error) {
 		return "", fmt.Errorf("failed to open file: %w", err)
 	}
 	defer file.Close()
-	
+
 	hasher := sha256.New()
 	if _, err := io.Copy(hasher, file); err != nil {
 		return "", fmt.Errorf("failed to calculate hash: %w", err)
 	}
-	
+
 	return hex.EncodeToString(hasher.Sum(nil)), nil
 }

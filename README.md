@@ -44,7 +44,7 @@ pulseup-agent/
 - **Git Service**: Repository cloning and management
 - **Build Service**: Application building and deployment
 - **System Service**: Hardware info and system metrics
-- **Database Service**: Database operations (planned)
+- **Database Service**: Provisioning, backups, and restores for MySQL, PostgreSQL, MariaDB, Redis, and MongoDB
 - **Caddy Service**: Reverse proxy and SSL management (planned)
 
 ## Configuration
@@ -63,6 +63,9 @@ Optional auto-reconnection settings:
 - `RECONNECT_INTERVAL`: Initial reconnection delay in seconds (default: `5`)
 - `RECONNECT_MAX_ATTEMPTS`: Maximum reconnection attempts, 0 for infinite (default: `0`)
 - `RECONNECT_BACKOFF_MAX`: Maximum backoff delay in seconds (default: `60`)
+
+Database backup configuration:
+- `PULSEUP_BACKUP_DIR`: Override the default `/var/lib/pulseup/backups` directory where database backups (including MongoDB archives) are stored on the agent
 
 ## Building and Running
 
@@ -176,11 +179,17 @@ func (c *ServiceContainer) registerHandlers() error {
 The agent uses a simple JSON-based protocol over WebSockets:
 
 ### Authentication
-Upon connection, the agent immediately sends an authentication message:
+Upon receiving an `auth_challenge`, the agent responds with an mTLS proof that includes its certificate and a signature generated from the challenge nonce:
 ```json
 {
-    "type": "auth",
-    "token": "your-agent-token-here"
+    "type": "auth_proof",
+    "data": {
+        "method": "mtls",
+        "certificate": "-----BEGIN CERTIFICATE-----...",
+        "signature": "base64-signature",
+        "nonce": "challenge-nonce",
+        "version": "v1.0.0"
+    }
 }
 ```
 

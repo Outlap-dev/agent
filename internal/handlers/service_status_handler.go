@@ -3,7 +3,10 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"strings"
 
+	"github.com/docker/docker/errdefs"
 	"pulseup-agent-go/pkg/logger"
 	"pulseup-agent-go/pkg/types"
 )
@@ -11,6 +14,56 @@ import (
 // ServiceStatusHandler handles requests to retrieve service status information.
 type ServiceStatusHandler struct {
 	*BaseHandler
+}
+
+func (h *ServiceStatusHandler) resolveContainerStatus(ctx context.Context, dockerSvc DockerService, serviceUID string) (types.ServiceStatus, error) {
+	if dockerSvc == nil {
+		return types.ServiceStatusStopped, fmt.Errorf("docker service not available")
+	}
+
+	status, err := dockerSvc.GetContainerStatus(ctx, serviceUID)
+	if err == nil {
+		return status, nil
+	}
+	lastErr := err
+
+	trimmedUID := strings.TrimSpace(serviceUID)
+	if trimmedUID == "" {
+		if err != nil && errdefs.IsNotFound(err) {
+			return types.ServiceStatusStopped, nil
+		}
+		return types.ServiceStatusStopped, err
+	}
+
+	matches, lookupErr := dockerSvc.FindContainersByLabel(ctx, serviceUIDLabelKey, trimmedUID)
+	if lookupErr != nil {
+		h.logger.Warn("label lookup failed", "service_uid", trimmedUID, "error", lookupErr)
+		return types.ServiceStatusStopped, lookupErr
+	}
+	if len(matches) == 0 {
+		if lastErr != nil && errdefs.IsNotFound(lastErr) {
+			return types.ServiceStatusStopped, nil
+		}
+		return types.ServiceStatusStopped, lastErr
+	}
+
+	for _, candidate := range matches {
+		name := strings.TrimSpace(strings.TrimPrefix(candidate, "/"))
+		if name == "" {
+			continue
+		}
+		status, inspectErr := dockerSvc.GetContainerStatus(ctx, name)
+		if inspectErr == nil {
+			return status, nil
+		}
+		lastErr = inspectErr
+		h.logger.Warn("failed to inspect container from label", "service_uid", trimmedUID, "container", name, "error", inspectErr)
+	}
+
+	if lastErr != nil && errdefs.IsNotFound(lastErr) {
+		return types.ServiceStatusStopped, nil
+	}
+	return types.ServiceStatusStopped, lastErr
 }
 
 // ServiceStatusRequest represents the request structure for service status retrieval.
@@ -47,10 +100,8 @@ func (h *ServiceStatusHandler) Get(ctx context.Context, data json.RawMessage) (*
 		}, nil
 	}
 
-	h.logger.Info("Getting service status", "service_uid", request.ServiceUID)
-
-	// Get container status from Docker service
-	status, err := h.services.GetDockerService().GetContainerStatus(ctx, request.ServiceUID)
+	dockerSvc := h.services.GetDockerService()
+	status, err := h.resolveContainerStatus(ctx, dockerSvc, request.ServiceUID)
 	if err != nil {
 		h.logger.Error("Failed to get container status", "service_uid", request.ServiceUID, "error", err)
 		return &types.CommandResponse{
@@ -66,10 +117,6 @@ func (h *ServiceStatusHandler) Get(ctx context.Context, data json.RawMessage) (*
 		// Don't fail the request if deployment status is not available
 		deploymentStatus = nil
 	}
-
-	h.logger.Info("Successfully retrieved service status",
-		"service_uid", request.ServiceUID,
-		"status", status)
 
 	responseData := map[string]interface{}{
 		"service_uid": request.ServiceUID,

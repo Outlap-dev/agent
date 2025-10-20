@@ -28,6 +28,13 @@ const (
 	databaseTypeLabelKey = "pulseup.database_type"
 )
 
+func getBackupBaseDir() string {
+	if override := os.Getenv("PULSEUP_BACKUP_DIR"); override != "" {
+		return override
+	}
+	return "/var/lib/pulseup/backups"
+}
+
 // DatabasePortInUseError is raised when attempting to use a port that is already in use
 type DatabasePortInUseError struct {
 	Port          int
@@ -368,7 +375,7 @@ func (d *DatabaseServiceImpl) DeployDatabase(ctx context.Context, dbType, passwo
 	hostConfig := &container.HostConfig{
 		PortBindings: portBindings,
 		RestartPolicy: container.RestartPolicy{
-			Name: "unless-stopped",
+			Name: "no",
 		},
 		Mounts: []mount.Mount{
 			{
@@ -469,7 +476,7 @@ func (d *DatabaseServiceImpl) BackupDatabase(ctx context.Context, name string) (
 	}
 
 	// Create backup directory on host
-	backupDir := "/var/lib/pulseup/backups"
+	backupDir := getBackupBaseDir()
 	databaseBackupDir := filepath.Join(backupDir, name)
 	if err := os.MkdirAll(databaseBackupDir, 0755); err != nil {
 		return nil, fmt.Errorf("failed to create backup directory: %w", err)
@@ -735,7 +742,7 @@ func (d *DatabaseServiceImpl) detectDatabaseType(ctx context.Context, containerI
 func (d *DatabaseServiceImpl) ListBackups(ctx context.Context, name string) ([]types.DatabaseBackupResult, error) {
 	d.logger.Debug("Listing database backups", "name", name)
 
-	backupDir := filepath.Join("/var/lib/pulseup/backups", name)
+	backupDir := filepath.Join(getBackupBaseDir(), name)
 
 	// Check if backup directory exists
 	if _, err := os.Stat(backupDir); os.IsNotExist(err) {
@@ -888,6 +895,58 @@ func (d *DatabaseServiceImpl) runScheduledBackup(ctx context.Context, serviceUID
 	})
 
 	d.logger.Info("Automated backup completed", "service_uid", serviceUID, "backup_uid", backupUID, "path", finalPath)
+}
+
+func (d *DatabaseServiceImpl) VerifyBackupStoragePath(ctx context.Context, serviceUID, storagePath string) (*types.BackupStorageVerificationResult, error) {
+	trimmed := strings.TrimSpace(storagePath)
+	if trimmed == "" {
+		return nil, fmt.Errorf("storage path is required")
+	}
+
+	normalized := filepath.Clean(trimmed)
+	if !filepath.IsAbs(normalized) {
+		normalized = filepath.Join(getBackupBaseDir(), normalized)
+	}
+
+	info, err := os.Stat(normalized)
+	if err != nil {
+		if !os.IsNotExist(err) {
+			return &types.BackupStorageVerificationResult{
+				Success: false,
+				Message: fmt.Sprintf("failed to inspect path: %v", err),
+			}, nil
+		}
+		if mkErr := os.MkdirAll(normalized, 0o755); mkErr != nil {
+			return &types.BackupStorageVerificationResult{
+				Success: false,
+				Message: fmt.Sprintf("failed to create directory: %v", mkErr),
+			}, nil
+		}
+	} else if !info.IsDir() {
+		return &types.BackupStorageVerificationResult{
+			Success: false,
+			Message: fmt.Sprintf("path exists but is not a directory: %s", normalized),
+		}, nil
+	}
+
+	testFile := filepath.Join(normalized, fmt.Sprintf(".pulseup-storage-test-%d", time.Now().UnixNano()))
+	if err := os.WriteFile(testFile, []byte("pulseup"), 0o644); err != nil {
+		return &types.BackupStorageVerificationResult{
+			Success: false,
+			Message: fmt.Sprintf("failed to write test file: %v", err),
+		}, nil
+	}
+	if err := os.Remove(testFile); err != nil {
+		d.logger.Warn("failed to remove storage verification file", "path", testFile, "error", err)
+	}
+
+	d.logger.Info("Storage path verified", "service_uid", serviceUID, "path", normalized)
+
+	return &types.BackupStorageVerificationResult{
+		Success:        true,
+		NormalizedPath: normalized,
+		Message:        "Storage path verified",
+	}, nil
 }
 
 func (d *DatabaseServiceImpl) copyBackupToPath(srcPath, destDir string) (string, error) {

@@ -6,7 +6,7 @@ import (
 	"strings"
 )
 
-var CurrentVersion = Version{Major: 1, Minor: 0, Patch: 0}
+var currentVersion = Version{Major: 0, Minor: 0, Patch: 0}
 
 type Version struct {
 	Major int
@@ -16,27 +16,27 @@ type Version struct {
 
 func ParseVersion(s string) (Version, error) {
 	s = strings.TrimPrefix(s, "v")
-	
+
 	parts := strings.Split(s, ".")
 	if len(parts) != 3 {
 		return Version{}, fmt.Errorf("invalid version format: %s", s)
 	}
-	
+
 	major, err := strconv.Atoi(parts[0])
 	if err != nil {
 		return Version{}, fmt.Errorf("invalid major version: %s", parts[0])
 	}
-	
+
 	minor, err := strconv.Atoi(parts[1])
 	if err != nil {
 		return Version{}, fmt.Errorf("invalid minor version: %s", parts[1])
 	}
-	
+
 	patch, err := strconv.Atoi(parts[2])
 	if err != nil {
 		return Version{}, fmt.Errorf("invalid patch version: %s", parts[2])
 	}
-	
+
 	return Version{
 		Major: major,
 		Minor: minor,
@@ -46,6 +46,23 @@ func ParseVersion(s string) (Version, error) {
 
 func (v Version) String() string {
 	return fmt.Sprintf("v%d.%d.%d", v.Major, v.Minor, v.Patch)
+}
+
+func SetCurrentVersion(v Version) {
+	currentVersion = v
+}
+
+func SetCurrentVersionFromString(s string) error {
+	v, err := ParseVersion(s)
+	if err != nil {
+		return err
+	}
+	SetCurrentVersion(v)
+	return nil
+}
+
+func GetCurrentVersion() Version {
+	return currentVersion
 }
 
 func (v Version) LessThan(other Version) bool {

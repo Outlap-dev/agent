@@ -122,6 +122,7 @@ type DatabaseService interface {
 	GetDatabaseStatus(ctx context.Context, name string) (types.ServiceStatus, error)
 	ListBackups(ctx context.Context, name string) ([]types.DatabaseBackupResult, error)
 	ConfigureAutomation(ctx context.Context, serviceUID string, config types.BackupAutomationConfig) error
+	VerifyBackupStoragePath(ctx context.Context, serviceUID, storagePath string) (*types.BackupStorageVerificationResult, error)
 	SetWebSocketEmitter(emitter WebSocketEmitter)
 }
 
@@ -204,19 +205,12 @@ type DockerComposeService interface {
 	Deploy(ctx context.Context, req *types.DockerComposeDeploymentRequest) (*types.DeploymentResult, error)
 }
 
-// VersionCheckService handles version checking and update notifications
-type VersionCheckService interface {
-	Start(ctx context.Context) error
-	Stop(ctx context.Context) error
-	CheckVersion(ctx context.Context) (*types.VersionCheckResult, error)
-}
-
 // UpdateService handles agent self-updates
 type UpdateService interface {
 	CheckForUpdate(ctx context.Context) (*types.UpdateMetadata, error)
 	DownloadUpdate(ctx context.Context, metadata *types.UpdateMetadata) (string, error)
 	ValidateUpdate(ctx context.Context, filePath string, metadata *types.UpdateMetadata) error
-	ApplyUpdate(ctx context.Context, filePath string) error
+	ApplyUpdate(ctx context.Context, metadata *types.UpdateMetadata, filePath string) error
 	StartAutoUpdateLoop(ctx context.Context) error
 	StopAutoUpdateLoop() error
 }

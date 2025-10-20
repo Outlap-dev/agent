@@ -21,16 +21,14 @@ import (
 type DatabaseHandler struct {
 	*BaseHandler
 
-	agentToken string
 	apiBaseURL string
 }
 
 // NewDatabaseHandler constructs a DatabaseHandler with optional download configuration.
-func NewDatabaseHandler(logger *logger.Logger, services ServiceProvider, agentToken, apiBaseURL string) *DatabaseHandler {
+func NewDatabaseHandler(logger *logger.Logger, services ServiceProvider, apiBaseURL string) *DatabaseHandler {
 	base := logger.With("controller", "database")
 	return &DatabaseHandler{
 		BaseHandler: NewBaseHandler(base, services),
-		agentToken:  strings.TrimSpace(agentToken),
 		apiBaseURL:  strings.TrimRight(apiBaseURL, "/"),
 	}
 }
@@ -84,6 +82,12 @@ type UpdateBackupAutomationRequest struct {
 	RetentionDays  int    `json:"retention_days"`
 }
 
+// VerifyBackupStoragePathRequest carries the payload for validating automation storage paths.
+type VerifyBackupStoragePathRequest struct {
+	ServiceUID  string `json:"service_uid"`
+	StoragePath string `json:"storage_path"`
+}
+
 // Deploy provisions a database container via the database service.
 func (h *DatabaseHandler) Deploy(ctx context.Context, data json.RawMessage) (*types.CommandResponse, error) {
 	var request DeployDatabaseRequest
@@ -101,6 +105,7 @@ func (h *DatabaseHandler) Deploy(ctx context.Context, data json.RawMessage) (*ty
 		return &types.CommandResponse{Success: false, Error: "password is required"}, nil
 	}
 
+	engine := strings.ToLower(request.Type)
 	supportedTypes := map[string]bool{
 		"mysql":      true,
 		"postgresql": true,
@@ -108,7 +113,7 @@ func (h *DatabaseHandler) Deploy(ctx context.Context, data json.RawMessage) (*ty
 		"redis":      true,
 		"mongodb":    true,
 	}
-	if !supportedTypes[request.Type] {
+	if !supportedTypes[engine] {
 		return &types.CommandResponse{Success: false, Error: "unsupported database type. Supported types: mysql, postgresql, mariadb, redis, mongodb"}, nil
 	}
 
@@ -118,18 +123,52 @@ func (h *DatabaseHandler) Deploy(ctx context.Context, data json.RawMessage) (*ty
 		}
 	}
 
-	username := request.Username
-	if username == "" {
-		username = "admin"
+	username := strings.TrimSpace(request.Username)
+	database := strings.TrimSpace(request.Database)
+
+	switch engine {
+	case "postgresql":
+		if username == "" {
+			username = "admin"
+		}
+		if database == "" {
+			database = "app"
+		}
+	case "mysql", "mariadb":
+		if username == "" {
+			username = "admin"
+		}
+		if database == "" {
+			database = "app"
+		}
+	case "mongodb":
+		if username == "" {
+			username = "root"
+		}
+		if database == "" {
+			database = "app"
+		}
+	case "redis":
+		if username == "" {
+			username = "default"
+		}
+		if database == "" {
+			database = "0"
+		}
+	default:
+		if username == "" {
+			username = "admin"
+		}
+		if database == "" {
+			database = "app"
+		}
 	}
-	database := request.Database
-	if database == "" {
-		database = "default"
-	}
+
+	request.Type = engine
 
 	h.logger.Info("Deploying database",
 		"service_uid", request.ServiceUID,
-		"type", request.Type,
+		"type", engine,
 		"port", request.Port,
 		"username", username,
 		"database", database)
@@ -144,7 +183,7 @@ func (h *DatabaseHandler) Deploy(ctx context.Context, data json.RawMessage) (*ty
 		return &types.CommandResponse{Success: false, Error: "database service not available"}, nil
 	}
 
-	result, err := dbService.DeployDatabase(ctx, request.Type, request.Password, request.ServiceUID, request.Port, username, database, request.DeploymentUID)
+	result, err := dbService.DeployDatabase(ctx, engine, request.Password, request.ServiceUID, request.Port, username, database, request.DeploymentUID)
 	if err != nil {
 		h.logger.Error("Failed to deploy database", "service_uid", request.ServiceUID, "error", err)
 		if statusService != nil {
@@ -438,6 +477,63 @@ func (h *DatabaseHandler) UpdateAutomation(ctx context.Context, data json.RawMes
 	return &types.CommandResponse{Success: true, Data: map[string]interface{}{"status": "ok"}}, nil
 }
 
+// VerifyAutomationPath ensures the provided storage path can be used for automated backups.
+func (h *DatabaseHandler) VerifyAutomationPath(ctx context.Context, data json.RawMessage) (*types.CommandResponse, error) {
+	var req VerifyBackupStoragePathRequest
+	if err := json.Unmarshal(data, &req); err != nil {
+		return &types.CommandResponse{Success: false, Error: "invalid request payload: " + err.Error()}, nil
+	}
+
+	serviceUID := strings.TrimSpace(req.ServiceUID)
+	storagePath := strings.TrimSpace(req.StoragePath)
+
+	if serviceUID == "" {
+		return &types.CommandResponse{Success: false, Error: "service_uid is required"}, nil
+	}
+	if storagePath == "" {
+		return &types.CommandResponse{Success: false, Error: "storage_path is required"}, nil
+	}
+
+	dbService := h.services.GetDatabaseService()
+	if dbService == nil {
+		return &types.CommandResponse{Success: false, Error: "database service not available"}, nil
+	}
+
+	result, err := dbService.VerifyBackupStoragePath(ctx, serviceUID, storagePath)
+	if err != nil {
+		h.logger.Error("Failed to verify backup storage path", "service_uid", serviceUID, "path", storagePath, "error", err)
+		return &types.CommandResponse{Success: false, Error: "failed to verify backup storage path: " + err.Error()}, nil
+	}
+	if result == nil {
+		return &types.CommandResponse{Success: false, Error: "verification result is empty"}, nil
+	}
+
+	message := strings.TrimSpace(result.Message)
+	if message == "" {
+		if result.Success {
+			message = "Storage path verified"
+		} else {
+			message = "Storage path verification failed"
+		}
+	}
+
+	responseData := map[string]interface{}{
+		"message": message,
+	}
+	if result.NormalizedPath != "" {
+		responseData["normalized_path"] = result.NormalizedPath
+	}
+
+	if !result.Success {
+		return &types.CommandResponse{Success: false, Error: message, Data: responseData}, nil
+	}
+
+	h.logger.Info("Storage path verified", "service_uid", serviceUID, "path", result.NormalizedPath)
+	responseData["status"] = "ok"
+
+	return &types.CommandResponse{Success: true, Data: responseData}, nil
+}
+
 func (h *DatabaseHandler) uploadURL() string {
 	if h.apiBaseURL == "" {
 		return "/api/agent/backups/upload"
@@ -485,9 +581,6 @@ func (h *DatabaseHandler) uploadBackupFile(ctx context.Context, uploadURL, backu
 	}
 
 	req.Header.Set("Content-Type", writer.FormDataContentType())
-	if h.agentToken != "" {
-		req.Header.Set("Authorization", "Bearer "+h.agentToken)
-	}
 	req.Header.Set("User-Agent", "PulseUp-Agent/1.0")
 
 	client := &http.Client{Timeout: 30 * time.Minute}

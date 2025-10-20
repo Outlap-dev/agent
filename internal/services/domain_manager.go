@@ -44,6 +44,11 @@ type DomainManager struct {
 	verificationTimeout time.Duration
 }
 
+type fileSnapshot struct {
+	data   []byte
+	exists bool
+}
+
 func NewDomainManager(baseLogger *logger.Logger, caddy CaddyService, deployment DeploymentService, opts ...DomainManagerOption) (*DomainManager, error) {
 	if caddy == nil {
 		return nil, fmt.Errorf("caddy service is required")
@@ -88,6 +93,73 @@ func NewDomainManager(baseLogger *logger.Logger, caddy CaddyService, deployment 
 	}
 
 	return mgr, nil
+}
+
+func (m *DomainManager) snapshotDomainsLocked() map[string]types.DomainProxyInfo {
+	clone := make(map[string]types.DomainProxyInfo, len(m.domains))
+	for key, value := range m.domains {
+		clone[key] = value
+	}
+	return clone
+}
+
+func (m *DomainManager) readFileSnapshot(path string) (fileSnapshot, error) {
+	data, err := os.ReadFile(path)
+	if err == nil {
+		return fileSnapshot{data: append([]byte(nil), data...), exists: true}, nil
+	}
+	if os.IsNotExist(err) {
+		backupPath := path + ".bak"
+		backupData, backupErr := os.ReadFile(backupPath)
+		if backupErr == nil {
+			return fileSnapshot{data: append([]byte(nil), backupData...), exists: true}, nil
+		}
+		if os.IsNotExist(backupErr) {
+			return fileSnapshot{exists: false}, nil
+		}
+		return fileSnapshot{}, fmt.Errorf("failed to read backup file %s: %w", backupPath, backupErr)
+	}
+	return fileSnapshot{}, fmt.Errorf("failed to read file %s: %w", path, err)
+}
+
+func (m *DomainManager) restoreFileFromSnapshot(path string, snap fileSnapshot) {
+	backupPath := path + ".bak"
+	if !snap.exists {
+		if removeErr := os.Remove(path); removeErr != nil && !os.IsNotExist(removeErr) {
+			m.logger.Warn("failed to remove file during rollback", "path", path, "error", removeErr)
+		}
+		if removeBackupErr := os.Remove(backupPath); removeBackupErr != nil && !os.IsNotExist(removeBackupErr) {
+			m.logger.Warn("failed to remove backup during rollback", "path", backupPath, "error", removeBackupErr)
+		}
+		return
+	}
+
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		m.logger.Warn("failed to prepare directory for rollback", "path", path, "error", err)
+		return
+	}
+	if err := os.WriteFile(path, snap.data, 0o644); err != nil {
+		m.logger.Warn("failed to restore file during rollback", "path", path, "error", err)
+	} else if err := os.WriteFile(backupPath, snap.data, 0o644); err != nil {
+		m.logger.Warn("failed to update backup during rollback", "path", backupPath, "error", err)
+	}
+}
+
+func (m *DomainManager) commitAndReloadLocked(ctx context.Context, previousDomains map[string]types.DomainProxyInfo, stateSnapshot, configSnapshot fileSnapshot) error {
+	if err := m.persistLocked(); err != nil {
+		m.domains = previousDomains
+		m.restoreFileFromSnapshot(m.storagePath, stateSnapshot)
+		return err
+	}
+
+	if err := m.applyLocked(ctx, configSnapshot.data, configSnapshot.exists); err != nil {
+		m.domains = previousDomains
+		m.restoreFileFromSnapshot(m.storagePath, stateSnapshot)
+		m.restoreFileFromSnapshot(m.caddyConfigPath, configSnapshot)
+		return err
+	}
+
+	return nil
 }
 
 func (m *DomainManager) UpsertDomain(ctx context.Context, req types.DomainProvisionRequest) (*types.DomainProxyInfo, error) {
@@ -158,6 +230,17 @@ func (m *DomainManager) UpsertDomain(ctx context.Context, req types.DomainProvis
 	}
 
 	m.mu.Lock()
+	previousDomains := m.snapshotDomainsLocked()
+	stateSnapshot, err := m.readFileSnapshot(m.storagePath)
+	if err != nil {
+		m.mu.Unlock()
+		return nil, fmt.Errorf("failed to capture domain state snapshot: %w", err)
+	}
+	configSnapshot, err := m.readFileSnapshot(m.caddyConfigPath)
+	if err != nil {
+		m.mu.Unlock()
+		return nil, fmt.Errorf("failed to capture caddy config snapshot: %w", err)
+	}
 
 	if existing, ok := m.domains[normalizedDomain]; ok {
 		if existing.SSLStatus != "" {
@@ -170,11 +253,7 @@ func (m *DomainManager) UpsertDomain(ctx context.Context, req types.DomainProvis
 
 	m.domains[normalizedDomain] = info
 
-	if err := m.persistLocked(); err != nil {
-		m.mu.Unlock()
-		return nil, err
-	}
-	if err := m.applyLocked(ctx); err != nil {
+	if err := m.commitAndReloadLocked(ctx, previousDomains, stateSnapshot, configSnapshot); err != nil {
 		m.mu.Unlock()
 		return nil, err
 	}
@@ -198,18 +277,32 @@ func (m *DomainManager) RemoveDomain(ctx context.Context, domain string) error {
 	}
 
 	m.mu.Lock()
-	defer m.mu.Unlock()
+	previousDomains := m.snapshotDomainsLocked()
+	stateSnapshot, err := m.readFileSnapshot(m.storagePath)
+	if err != nil {
+		m.mu.Unlock()
+		return fmt.Errorf("failed to capture domain state snapshot: %w", err)
+	}
+	configSnapshot, err := m.readFileSnapshot(m.caddyConfigPath)
+	if err != nil {
+		m.mu.Unlock()
+		return fmt.Errorf("failed to capture caddy config snapshot: %w", err)
+	}
 
 	if _, ok := m.domains[normalized]; !ok {
+		m.mu.Unlock()
 		return errDomainNotFound
 	}
 
 	delete(m.domains, normalized)
 
-	if err := m.persistLocked(); err != nil {
+	if err := m.commitAndReloadLocked(ctx, previousDomains, stateSnapshot, configSnapshot); err != nil {
+		m.mu.Unlock()
 		return err
 	}
-	return m.applyLocked(ctx)
+
+	m.mu.Unlock()
+	return nil
 }
 
 func (m *DomainManager) GetDomain(ctx context.Context, domain string) (*types.DomainProxyInfo, error) {
@@ -253,6 +346,17 @@ func (m *DomainManager) RefreshService(ctx context.Context, serviceUID string) e
 	}
 
 	m.mu.Lock()
+	previousDomains := m.snapshotDomainsLocked()
+	stateSnapshot, err := m.readFileSnapshot(m.storagePath)
+	if err != nil {
+		m.mu.Unlock()
+		return fmt.Errorf("failed to capture domain state snapshot: %w", err)
+	}
+	configSnapshot, err := m.readFileSnapshot(m.caddyConfigPath)
+	if err != nil {
+		m.mu.Unlock()
+		return fmt.Errorf("failed to capture caddy config snapshot: %w", err)
+	}
 
 	updated := false
 	var domainsToVerify []types.DomainProxyInfo
@@ -279,11 +383,7 @@ func (m *DomainManager) RefreshService(ctx context.Context, serviceUID string) e
 		return nil
 	}
 
-	if err := m.persistLocked(); err != nil {
-		m.mu.Unlock()
-		return err
-	}
-	if err := m.applyLocked(ctx); err != nil {
+	if err := m.commitAndReloadLocked(ctx, previousDomains, stateSnapshot, configSnapshot); err != nil {
 		m.mu.Unlock()
 		return err
 	}
@@ -362,10 +462,18 @@ func (m *DomainManager) persistLocked() error {
 		return fmt.Errorf("failed to write domain state: %w", err)
 	}
 
-	return os.Rename(tempFile, m.storagePath)
+	if err := os.Rename(tempFile, m.storagePath); err != nil {
+		return fmt.Errorf("failed to activate domain state: %w", err)
+	}
+
+	if err := os.WriteFile(m.storagePath+".bak", data, 0o644); err != nil {
+		m.logger.Warn("failed to update domain state backup", "path", m.storagePath, "error", err)
+	}
+
+	return nil
 }
 
-func (m *DomainManager) applyLocked(ctx context.Context) error {
+func (m *DomainManager) applyLocked(ctx context.Context, previousConfig []byte, hadPrevious bool) error {
 	list := make([]types.DomainProxyInfo, 0, len(m.domains))
 	for _, domain := range m.domains {
 		list = append(list, domain)
@@ -398,7 +506,18 @@ func (m *DomainManager) applyLocked(ctx context.Context) error {
 	}
 
 	if err := m.caddy.ReloadConfig(ctx); err != nil {
+		if hadPrevious {
+			if restoreErr := os.WriteFile(m.caddyConfigPath, previousConfig, 0o644); restoreErr != nil {
+				m.logger.Warn("failed to restore previous caddy config after reload error", "error", restoreErr)
+			}
+		} else if removeErr := os.Remove(m.caddyConfigPath); removeErr != nil && !os.IsNotExist(removeErr) {
+			m.logger.Warn("failed to remove caddy config after reload error", "error", removeErr)
+		}
 		return fmt.Errorf("failed to reload caddy configuration: %w", err)
+	}
+
+	if err := os.WriteFile(m.caddyConfigPath+".bak", []byte(config), 0o644); err != nil {
+		m.logger.Warn("failed to update caddy config backup", "error", err)
 	}
 
 	return nil
@@ -441,6 +560,9 @@ func (m *DomainManager) ensureCaddyAttached(ctx context.Context) error {
 func isContainerNotFoundError(err error) bool {
 	if err == nil {
 		return false
+	}
+	if errors.Is(err, ErrContainerNotFound) {
+		return true
 	}
 
 	msg := strings.ToLower(err.Error())

@@ -1,8 +1,11 @@
 #!/bin/sh
 set -e
 
+DOCKERD_HOST=${DOCKERD_HOST:-unix:///var/run/docker.sock}
+export DOCKER_HOST="$DOCKERD_HOST"
+
 # Start Docker daemon in the background
-dockerd > /var/log/dockerd.log 2>&1 &
+dockerd --host "$DOCKERD_HOST" > /var/log/dockerd.log 2>&1 &
 
 # Wait for Docker daemon to be ready
 retries=10

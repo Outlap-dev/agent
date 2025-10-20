@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/url"
@@ -13,6 +14,7 @@ import (
 
 	"pulseup-agent-go/pkg/logger"
 
+	dockertypes "github.com/docker/docker/api/types"
 	containertypes "github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/filters"
 	imagetypes "github.com/docker/docker/api/types/image"
@@ -47,6 +49,8 @@ const (
 const (
 	defaultCaddyEmail = "domains@pulseup.io"
 )
+
+var ErrContainerNotFound = errors.New("container not found")
 
 type DomainConfig struct {
 	Domain  string            `json:"domain"`
@@ -147,7 +151,7 @@ func (c *caddyService) AddSite(ctx context.Context, domain, target string, ssl b
 	if upstreamContainer != "" {
 		// Ensure container is in the PulseUp proxy network
 		if err := c.ensureContainerInNetwork(ctx, upstreamContainer, CaddyNetwork); err != nil {
-			c.logger.Warn("Failed to connect container %s to PulseUp network: %v", upstreamContainer, err)
+			c.logger.Warn("failed to connect upstream container to network", "container", upstreamContainer, "network", CaddyNetwork, "error", err)
 		}
 	}
 
@@ -201,7 +205,7 @@ func (c *caddyService) RemoveSite(ctx context.Context, domain string) error {
 
 	// Check if domain exists
 	if _, exists := domains[domain]; !exists {
-		c.logger.Warn("Domain %s not found in Caddy configuration", domain)
+		c.logger.Warn("domain not found in caddy configuration", "domain", domain)
 		return nil
 	}
 
@@ -239,12 +243,12 @@ func (c *caddyService) ReloadConfig(ctx context.Context) error {
 	}
 
 	if len(containers) == 0 {
-		return fmt.Errorf("Caddy container not found")
+		return fmt.Errorf("caddy container not found")
 	}
 
 	container := containers[0]
 	if container.State != "running" {
-		c.logger.Warn("Caddy container is not running when attempting reload, starting it", "container", container.Names)
+		c.logger.Warn("caddy container is not running when attempting reload, starting it", "container", container.Names)
 		if err := c.dockerClient.ContainerStart(ctx, container.ID, containertypes.StartOptions{}); err != nil {
 			return fmt.Errorf("failed to start Caddy container: %w", err)
 		}
@@ -471,31 +475,16 @@ func (c *caddyService) ensureNetwork(ctx context.Context, networkName string) er
 		return err
 	}
 
-	c.logger.Info("Created Docker network: %s", networkName)
+	c.logger.Info("Created Docker network", "network", networkName)
 	return nil
 }
 
 func (c *caddyService) ensureContainerInNetwork(ctx context.Context, containerName, networkName string) error {
-	// Get container by name or ID
-	args := filters.NewArgs()
-	args.Add("name", containerName)
-	args.Add("id", containerName)
-
-	containers, err := c.dockerClient.ContainerList(ctx, containertypes.ListOptions{
-		All:     true,
-		Filters: args,
-	})
+	container, err := c.resolveContainer(ctx, containerName)
 	if err != nil {
 		return err
 	}
 
-	if len(containers) == 0 {
-		return fmt.Errorf("container %s not found", containerName)
-	}
-
-	container := containers[0]
-
-	// Ensure the network exists first
 	if err := c.ensureNetwork(ctx, networkName); err != nil {
 		return err
 	}
@@ -516,15 +505,19 @@ func (c *caddyService) ensureContainerInNetwork(ctx context.Context, containerNa
 
 	network := networks[0]
 
-	// Check if container is already connected by ID or name
-	normalizedName := strings.TrimPrefix(containerName, "/")
+	requestedName := strings.TrimPrefix(containerName, "/")
+	actualName := requestedName
+	if len(container.Names) > 0 {
+		actualName = strings.TrimPrefix(container.Names[0], "/")
+	}
+
 	for id, endpoint := range network.Containers {
-		if id == container.ID || strings.TrimPrefix(endpoint.Name, "/") == normalizedName || endpoint.Name == containerName {
-			return nil // Already connected
+		endpointName := strings.TrimPrefix(endpoint.Name, "/")
+		if id == container.ID || endpointName == requestedName || endpointName == actualName || endpoint.Name == containerName {
+			return nil
 		}
 	}
 
-	// Connect container to network
 	if err := c.dockerClient.NetworkConnect(ctx, network.ID, container.ID, &networktypes.EndpointSettings{}); err != nil {
 		if errdefs.IsConflict(err) {
 			return nil
@@ -535,13 +528,86 @@ func (c *caddyService) ensureContainerInNetwork(ctx context.Context, containerNa
 		return err
 	}
 
-	c.logger.Info("Connected container %s to network %s", normalizedName, networkName)
+	c.logger.Info("Connected container to network", "container", actualName, "network", networkName)
 	return nil
 }
 
-func (c *caddyService) pullImage(ctx context.Context, imageName string) error {
-	const pullBufferSize = 1024
+func (c *caddyService) resolveContainer(ctx context.Context, reference string) (*dockertypes.Container, error) {
+	ref := strings.TrimSpace(reference)
+	if ref == "" {
+		return nil, fmt.Errorf("container reference is empty")
+	}
 
+	args := filters.NewArgs()
+	args.Add("name", ref)
+	args.Add("id", ref)
+
+	containers, err := c.dockerClient.ContainerList(ctx, containertypes.ListOptions{
+		All:     true,
+		Filters: args,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	if selected := selectContainerWithReference(containers, ref); selected != nil {
+		return selected, nil
+	}
+
+	containers, err = c.dockerClient.ContainerList(ctx, containertypes.ListOptions{All: true})
+	if err != nil {
+		return nil, err
+	}
+	if selected := matchContainerByReference(containers, ref); selected != nil {
+		return selected, nil
+	}
+
+	if strings.EqualFold(ref, CaddyContainerName) {
+		container, err := c.findContainerByLabels(ctx, ref, map[string]string{
+			managedLabelKey:          "true",
+			CaddyComponentLabel:      "caddy",
+			serviceUIDLabelKey:       CaddyServiceUID,
+			"pulseup.deployment_uid": CaddyDeploymentUID,
+			lifecycleFinalNameLabel:  CaddyLifecycleName,
+		})
+		if err != nil {
+			return nil, err
+		}
+		if container != nil {
+			c.logger.Debug("resolved caddy container via labels", "requested", reference, "resolved", container.Names)
+			return container, nil
+		}
+	}
+
+	container, err := c.findContainerByLabels(ctx, ref, map[string]string{
+		managedLabelKey:         "true",
+		lifecycleFinalNameLabel: ref,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if container != nil {
+		c.logger.Debug("resolved container via lifecycle label", "requested", reference, "resolved", container.Names)
+		return container, nil
+	}
+
+	if serviceUID := extractServiceUIDFromName(ref); serviceUID != "" {
+		container, err = c.findContainerByLabels(ctx, ref, map[string]string{
+			managedLabelKey:    "true",
+			serviceUIDLabelKey: serviceUID,
+		})
+		if err != nil {
+			return nil, err
+		}
+		if container != nil {
+			c.logger.Debug("resolved container via service uid label", "requested", reference, "service_uid", serviceUID, "resolved", container.Names)
+			return container, nil
+		}
+	}
+
+	return nil, fmt.Errorf("container %s not found: %w", reference, ErrContainerNotFound)
+}
+func (c *caddyService) pullImage(ctx context.Context, imageName string) error {
 	c.logger.Info("Pulling Docker image", "image", imageName)
 
 	pullReader, err := c.dockerClient.ImagePull(ctx, imageName, imagetypes.PullOptions{})
@@ -593,12 +659,12 @@ func (c *caddyService) startCaddyContainer(ctx context.Context) error {
 
 	// Remove existing container if it exists
 	for _, container := range containers {
-		c.logger.Info("Removing existing Caddy container: %s", container.ID)
+		c.logger.Info("Removing existing Caddy container", "id", container.ID, "names", container.Names)
 		err = c.dockerClient.ContainerRemove(ctx, container.ID, containertypes.RemoveOptions{
 			Force: true,
 		})
 		if err != nil {
-			c.logger.Warn("Failed to remove existing container: %v", err)
+			c.logger.Warn("failed to remove existing caddy container", "id", container.ID, "error", err)
 		}
 	}
 
@@ -626,7 +692,7 @@ func (c *caddyService) startCaddyContainer(ctx context.Context) error {
 			fmt.Sprintf("%s:%s:rw", c.hostDataDir(), CaddyContainerDataDir),
 		},
 		RestartPolicy: containertypes.RestartPolicy{
-			Name: "unless-stopped",
+			Name: "no",
 		},
 	}
 
@@ -654,7 +720,7 @@ func (c *caddyService) startCaddyContainer(ctx context.Context) error {
 	}
 
 	if err := c.ensureContainerInNetwork(ctx, response.ID, CaddyNetwork); err != nil {
-		c.logger.Warn("Failed to ensure Caddy container is attached to network %s: %v", CaddyNetwork, err)
+		c.logger.Warn("failed to ensure caddy container is attached to network", "network", CaddyNetwork, "error", err)
 	}
 
 	c.logger.Info("Caddy container started successfully")
@@ -682,6 +748,102 @@ func caddyContainerLabels() map[string]string {
 		lifecycleVersionLabel:    CaddyLifecycleVersion,
 		CaddyComponentLabel:      "caddy",
 	}
+}
+
+func selectPreferredContainer(containers []dockertypes.Container) *dockertypes.Container {
+	for i := range containers {
+		if strings.EqualFold(containers[i].State, "running") {
+			return &containers[i]
+		}
+	}
+	if len(containers) > 0 {
+		return &containers[0]
+	}
+	return nil
+}
+
+func selectContainerWithReference(containers []dockertypes.Container, reference string) *dockertypes.Container {
+	if match := matchContainerByReference(containers, reference); match != nil {
+		return match
+	}
+	return selectPreferredContainer(containers)
+}
+
+func matchContainerByReference(containers []dockertypes.Container, reference string) *dockertypes.Container {
+	ref := strings.TrimSpace(reference)
+	if ref == "" {
+		return nil
+	}
+	normalizedName := strings.TrimPrefix(ref, "/")
+	refLower := strings.ToLower(ref)
+
+	var fallback *dockertypes.Container
+	for i := range containers {
+		container := &containers[i]
+		idLower := strings.ToLower(container.ID)
+		if strings.HasPrefix(idLower, refLower) {
+			if strings.EqualFold(container.State, "running") {
+				return container
+			}
+			if fallback == nil {
+				fallback = container
+			}
+		}
+		for _, name := range container.Names {
+			trimmed := strings.TrimPrefix(name, "/")
+			if strings.EqualFold(trimmed, normalizedName) {
+				if strings.EqualFold(container.State, "running") {
+					return container
+				}
+				if fallback == nil {
+					fallback = container
+				}
+				break
+			}
+		}
+	}
+
+	return fallback
+}
+
+func (c *caddyService) findContainerByLabels(ctx context.Context, reference string, labelFilters map[string]string) (*dockertypes.Container, error) {
+	if len(labelFilters) == 0 {
+		return nil, nil
+	}
+
+	args := filters.NewArgs()
+	for key, value := range labelFilters {
+		args.Add("label", fmt.Sprintf("%s=%s", key, value))
+	}
+
+	containers, err := c.dockerClient.ContainerList(ctx, containertypes.ListOptions{
+		All:     true,
+		Filters: args,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	if reference != "" {
+		if selected := selectContainerWithReference(containers, reference); selected != nil {
+			return selected, nil
+		}
+	}
+
+	return selectPreferredContainer(containers), nil
+}
+
+func extractServiceUIDFromName(name string) string {
+	if !strings.HasPrefix(name, "pulseup-app-") {
+		return ""
+	}
+
+	trimmed := strings.TrimPrefix(name, "pulseup-app-")
+	idx := strings.LastIndex(strings.ToLower(trimmed), "-v")
+	if idx <= 0 {
+		return ""
+	}
+	return strings.TrimSpace(trimmed[:idx])
 }
 
 func (c *caddyService) readDomainsFile() (map[string]DomainConfig, error) {

@@ -63,9 +63,4 @@ func (r *RuntimeEnvironment) LogJoinTokenStatus(log *logger.Logger) {
 	if target == nil {
 		return
 	}
-
-	target.Info("Checking join token configuration",
-		"join_token_provided", r.JoinTokenProvided,
-		"join_token_length", len(strings.TrimSpace(r.Config.JoinToken)),
-		"join_token_preview", r.JoinTokenPreview)
 }

@@ -9,10 +9,9 @@ import (
 )
 
 // DatabaseRouteConfig allows callers to customize database route registration.
-// Both AgentToken and APIBaseURL are optional; when omitted, the handler will
-// fall back to environment defaults where possible.
+// APIBaseURL is optional; when omitted, the handler will fall back to
+// environment defaults where possible.
 type DatabaseRouteConfig struct {
-	AgentToken string
 	APIBaseURL string
 }
 
@@ -40,12 +39,6 @@ func sanitizeDatabaseConfig(cfg *DatabaseRouteConfig) *DatabaseRouteConfig {
 		cfg = &DatabaseRouteConfig{}
 	}
 
-	if cfg.AgentToken == "" {
-		cfg.AgentToken = os.Getenv("AGENT_TOKEN")
-	}
-
-	// Normalize whitespace and trailing slashes to keep handler behaviour consistent.
-	cfg.AgentToken = strings.TrimSpace(cfg.AgentToken)
 	if trimmed := strings.TrimRight(strings.TrimSpace(cfg.APIBaseURL), "/"); trimmed != "" {
 		cfg.APIBaseURL = trimmed
 	} else {
@@ -65,7 +58,7 @@ func RegisterDatabaseRoutes(router *Router, handlerLogger *logger.Logger, servic
 	}
 
 	sanitized := sanitizeDatabaseConfig(cfg)
-	controller := handlers.NewDatabaseHandler(handlerLogger, services, sanitized.AgentToken, sanitized.APIBaseURL)
+	controller := handlers.NewDatabaseHandler(handlerLogger, services, sanitized.APIBaseURL)
 
 	database := router.Group("database")
 	{
@@ -85,6 +78,9 @@ func RegisterDatabaseRoutes(router *Router, handlerLogger *logger.Logger, servic
 
 			backups.Controller("automation", controller).
 				Handle("update", controller.UpdateAutomation)
+
+			backups.Controller("storage", controller).
+				Handle("verify", controller.VerifyAutomationPath)
 		}
 	}
 }

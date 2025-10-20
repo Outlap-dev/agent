@@ -33,8 +33,6 @@ type serviceBundle struct {
 	dockerComposeService  DockerComposeService
 	monitoringImpl        *MonitoringServiceImpl
 	monitoringService     MonitoringService
-	versionCheckImpl      *versionCheckService
-	versionCheckService   VersionCheckService
 	commandImpl           *commandService
 	commandService        CommandService
 	updateImpl            *updateService
@@ -101,21 +99,14 @@ func newServiceBundle(cfg *config.Config, baseLogger *logger.Logger, wsManager W
 	bundle.monitoringImpl.SetWebSocketManager(wsManager)
 	bundle.monitoringService = bundle.monitoringImpl
 
-	bundle.versionCheckImpl = NewVersionCheckService(cfg, baseLogger).(*versionCheckService)
-	bundle.versionCheckService = bundle.versionCheckImpl
-
 	bundle.commandImpl = NewCommandService(baseLogger, bundle.dockerService, bundle.systemService).(*commandService)
 	bundle.commandService = bundle.commandImpl
 
-	bundle.updateImpl = NewUpdateService(cfg, baseLogger, bundle.commandService).(*updateService)
+	bundle.updateImpl = NewUpdateService(cfg, baseLogger, bundle.commandService, ipcClient).(*updateService)
 	bundle.updateService = bundle.updateImpl
 
-	if ipcClient != nil {
-		bundle.packageService = NewPackageServiceIPC(baseLogger, ipcClient)
-	} else {
-		bundle.packageImpl = NewPackageService(baseLogger)
-		bundle.packageService = bundle.packageImpl
-	}
+	bundle.packageImpl = NewPackageService(baseLogger)
+	bundle.packageService = bundle.packageImpl
 
 	bundle.agentLogService = NewAgentLogService(baseLogger)
 
@@ -170,9 +161,6 @@ func (b *serviceBundle) apply(c *ServiceContainer) {
 
 	c.monitoringSvc = b.monitoringImpl
 	c.monitoringService = b.monitoringService
-
-	c.versionCheckSvc = b.versionCheckImpl
-	c.versionCheckService = b.versionCheckService
 
 	c.commandSvc = b.commandImpl
 	c.commandService = b.commandService
