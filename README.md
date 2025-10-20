@@ -8,7 +8,9 @@ The Go agent follows a clean architecture pattern with the following structure:
 
 ```
 pulseup-agent/
-├── cmd/agent/           # Main application entry point
+├── cmd/
+│   ├── supervisor/      # Privileged supervisor process (runs as root)
+│   └── worker/          # Unprivileged worker process (handles WebSocket connection)
 ├── internal/
 │   ├── config/          # Configuration management  
 │   ├── services/        # Business logic services
@@ -233,43 +235,62 @@ Log levels: DEBUG, INFO, WARN, ERROR
 
 ## Deployment
 
-### Systemd Service
-Create `/etc/systemd/system/pulseup-agent.service`:
+### Systemd Services
+The production install runs as two systemd units: a privileged supervisor and an unprivileged worker. The installer in this repository writes both unit files automatically, but if you need to create them manually you can use the following templates.
+
+`/etc/systemd/system/pulseup-supervisor.service`
 
 ```ini
 [Unit]
-Description=PulseUp Agent
-After=network.target
+Description=PulseUp Supervisor
+After=network-online.target docker.service
+Wants=network-online.target
 
 [Service]
 Type=simple
-User=pulseup
-WorkingDirectory=/opt/pulseup-agent
-ExecStart=/opt/pulseup-agent/pulseup-agent
+User=root
+Group=root
+EnvironmentFile=/etc/pulseup-agent/config
+ExecStart=/usr/local/bin/pulseup-supervisor
 Restart=always
 RestartSec=5
-Environment=WEBSOCKET_URL=ws://your-server.com/ws/agent
+RuntimeDirectory=pulseup
+RuntimeDirectoryMode=0770
+StandardOutput=append:/var/log/pulseup/supervisor.log
+StandardError=append:/var/log/pulseup/supervisor.log
+
+[Install]
+WantedBy=multi-user.target
+```
+
+`/etc/systemd/system/pulseup-worker.service`
+
+```ini
+[Unit]
+Description=PulseUp Worker
+After=pulseup-supervisor.service
+Requires=pulseup-supervisor.service
+
+[Service]
+Type=simple
+User=pulseup-worker
+Group=pulseup
 EnvironmentFile=/etc/pulseup-agent/config
+WorkingDirectory=/opt/pulseup
+ExecStart=/usr/local/bin/pulseup-worker
+Restart=always
+RestartSec=5
+SupplementaryGroups=docker
+UMask=0027
+StandardOutput=append:/var/log/pulseup/worker.log
+StandardError=append:/var/log/pulseup/worker.log
 
 [Install]
 WantedBy=multi-user.target
 ```
 
 ### Docker
-```dockerfile
-FROM golang:1.21-alpine AS builder
-WORKDIR /app
-COPY go.mod go.sum ./
-RUN go mod download
-COPY . .
-RUN go build -o pulseup-agent ./cmd/agent
-
-FROM alpine:latest
-RUN apk --no-cache add ca-certificates
-WORKDIR /root/
-COPY --from=builder /app/pulseup-agent .
-CMD ["./pulseup-agent"]
-```
+For development the provided `docker-compose.yml` spins up the supervisor and worker processes inside a single container. Refer to that file if you prefer a containerised workflow.
 
 ## Testing
 

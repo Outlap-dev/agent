@@ -49,7 +49,7 @@ func main() {
 	defer cancel()
 
 	// Create IPC client to communicate with supervisor
-	socketConfig := ipc.DefaultSocketConfig()
+	socketConfig := ipc.DefaultSocketConfigWithGroup(cfg.SocketGroup)
 	ipcClient := ipc.NewClient(socketConfig, mainLogger)
 
 	// Connect to supervisor with retry

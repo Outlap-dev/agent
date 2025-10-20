@@ -51,7 +51,6 @@ type ServiceProvider interface {
 	GetMonitoringService() MonitoringService
 	GetUpdateService() UpdateService
 	GetCommandService() CommandService
-	GetPackageService() PackageService
 	GetAgentLogService() AgentLogService
 	GetDomainService() DomainService
 }
@@ -100,7 +99,6 @@ type BuildService interface {
 type SystemService interface {
 	GetSystemMetrics(ctx context.Context) (*types.SystemMetrics, error)
 	GetHardwareInfo(ctx context.Context) (*types.HardwareInfo, error)
-	RestartServer(ctx context.Context) error
 }
 
 type WebSocketManager interface {
@@ -186,17 +184,6 @@ type CommandService interface {
 	ExecuteWhitelistedCommand(ctx context.Context, commandID string, args map[string]string) (*types.CommandResult, error)
 	GetAvailableCommands() []types.WhitelistedCommand
 	IsCommandWhitelisted(commandID string) bool
-}
-
-type PackageService interface {
-	GetUpgradablePackages(ctx context.Context) (*types.UpgradablePackages, error)
-	UpdatePackages(ctx context.Context, packageNames []string) (*types.PackageUpdateResult, error)
-	UpdateAllPackages(ctx context.Context) (*types.PackageUpdateResult, error)
-	GetPackageInfo(ctx context.Context, packageName string) (*types.PackageInfo, error)
-
-	// Streaming methods for real-time output
-	UpdatePackagesStream(ctx context.Context, packageNames []string, outputChan chan<- types.PackageLogMessage) (*types.PackageUpdateResult, error)
-	UpdateAllPackagesStream(ctx context.Context, outputChan chan<- types.PackageLogMessage) (*types.PackageUpdateResult, error)
 }
 
 type DomainService interface {

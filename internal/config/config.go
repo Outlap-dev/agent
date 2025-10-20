@@ -45,8 +45,9 @@ type Config struct {
 	UpdateRepository    string
 
 	// mTLS and enrollment configuration
-	CertDir   string
-	JoinToken string
+	CertDir     string
+	JoinToken   string
+	SocketGroup string
 }
 
 // Load loads configuration from environment variables
@@ -77,8 +78,9 @@ func Load() (*Config, error) {
 		UpdateRepository:             resolveUpdateRepository(),
 
 		// mTLS and enrollment configuration
-		CertDir:   getEnv("CERT_DIR", "/var/lib/pulseup/certs"),
-		JoinToken: getEnv("JOIN_TOKEN", ""),
+		CertDir:     getEnv("CERT_DIR", "/var/lib/pulseup/certs"),
+		JoinToken:   getEnv("JOIN_TOKEN", ""),
+		SocketGroup: getEnv("PULSEUP_AGENT_GROUP", "pulseup"),
 	}
 
 	// Validate required fields

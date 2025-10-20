@@ -56,7 +56,6 @@ type ServiceContainer struct {
 	containerEventService ContainerEventService
 	updateService         UpdateService
 	commandService        CommandService
-	packageService        PackageService
 	agentLogService       AgentLogService
 	sessionManager        *AgentSession
 
@@ -76,7 +75,6 @@ type ServiceContainer struct {
 	containerEventSvc *ContainerEventServiceImpl
 	updateSvc         *updateService
 	commandSvc        *commandService
-	packageSvc        *PackageServiceImpl
 	hardwareReporter  *HardwareReporter
 	domainMgr         *DomainManager
 }
@@ -292,7 +290,6 @@ func (c *ServiceContainer) registerHandlers() error {
 		monitoringService:    c.monitoringService,
 		updateService:        c.updateService,
 		commandService:       c.commandService,
-		packageService:       c.packageService,
 		agentLogService:      c.agentLogService,
 		wsManager:            c.wsAdapter,
 	}
@@ -422,7 +419,6 @@ type serviceProviderImpl struct {
 	monitoringService    MonitoringService
 	updateService        UpdateService
 	commandService       CommandService
-	packageService       PackageService
 	agentLogService      AgentLogService
 	wsManager            handlers.WebSocketManager
 }
@@ -494,10 +490,6 @@ func (sp *serviceProviderImpl) GetUpdateService() handlers.UpdateService {
 
 func (sp *serviceProviderImpl) GetCommandService() handlers.CommandService {
 	return sp.commandService
-}
-
-func (sp *serviceProviderImpl) GetPackageService() handlers.PackageService {
-	return sp.packageService
 }
 
 func (sp *serviceProviderImpl) GetAgentLogService() handlers.AgentLogService {

@@ -2,8 +2,12 @@
 package ipc
 
 import (
+	"bufio"
 	"encoding/json"
 	"fmt"
+	"os"
+	"strconv"
+	"strings"
 	"time"
 )
 
@@ -117,14 +121,71 @@ type SocketConfig struct {
 
 // DefaultSocketConfig returns default socket configuration
 func DefaultSocketConfig() *SocketConfig {
+	return DefaultSocketConfigWithGroup("")
+}
+
+// DefaultSocketConfigWithGroup returns the default socket configuration with the provided group name.
+func DefaultSocketConfigWithGroup(groupName string) *SocketConfig {
+	return buildSocketConfig(groupName)
+}
+
+func buildSocketConfig(groupName string) *SocketConfig {
+	gid := os.Getegid()
+	candidate := strings.TrimSpace(groupName)
+	if candidate == "" {
+		candidate = strings.TrimSpace(os.Getenv("PULSEUP_AGENT_GROUP"))
+	}
+
+	if candidate != "" {
+		if resolved, err := lookupGroupID(candidate); err == nil {
+			gid = resolved
+		}
+	}
+
 	return &SocketConfig{
 		SocketPath: "/var/run/pulseup/supervisor.sock",
 		SocketMode: 0660, // rw-rw----
 		SocketUID:  0,    // root
-		SocketGID:  1000, // pulseup group (to be determined)
+		SocketGID:  gid,
 		Timeout:    30 * time.Second,
 		BufferSize: 4096,
 	}
+}
+
+func lookupGroupID(groupName string) (int, error) {
+	file, err := os.Open("/etc/group")
+	if err != nil {
+		return 0, err
+	}
+	defer file.Close()
+
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+
+		parts := strings.Split(line, ":")
+		if len(parts) < 3 {
+			continue
+		}
+		if parts[0] != groupName {
+			continue
+		}
+
+		gid, err := strconv.Atoi(parts[2])
+		if err != nil {
+			return 0, err
+		}
+		return gid, nil
+	}
+
+	if err := scanner.Err(); err != nil {
+		return 0, err
+	}
+
+	return 0, fmt.Errorf("group %q not found", groupName)
 }
 
 // ValidateRequest performs basic validation on a privileged request

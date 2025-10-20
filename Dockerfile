@@ -85,7 +85,8 @@ RUN apt-get update && apt-get install -y \
 RUN curl -sSL https://nixpacks.com/install.sh | bash
 
 # Create a non-root user for the worker process
-RUN useradd --create-home --shell /bin/bash --uid 1000 pulseup-worker
+RUN groupadd --system pulseup && \
+    useradd --create-home --shell /bin/bash --uid 1000 --gid pulseup pulseup-worker
 
 # Add pulseup-worker to docker group for container operations
 RUN usermod -aG docker pulseup-worker
@@ -95,23 +96,23 @@ RUN mkdir -p /root/.docker /home/pulseup-worker/.docker \
     && echo '{}' > /root/.docker/config.json \
     && echo '{}' > /home/pulseup-worker/.docker/config.json \
     && chmod 644 /root/.docker/config.json /home/pulseup-worker/.docker/config.json \
-    && chown -R pulseup-worker:pulseup-worker /home/pulseup-worker/.docker
+    && chown -R pulseup-worker:pulseup /home/pulseup-worker/.docker
 
 # Ensure processes default to the pulseup-worker home when switching user
 ENV HOME=/home/pulseup-worker
 
 # Create app directory, IPC directory, and apps directory
 WORKDIR /app
-RUN mkdir -p /var/run/pulseup && chmod 755 /var/run/pulseup
-RUN mkdir -p /opt/pulseup && chown -R pulseup-worker:pulseup-worker /opt/pulseup
-RUN mkdir -p /var/lib/pulseup && chmod 1777 /var/lib/pulseup
+RUN mkdir -p /var/run/pulseup && chown root:pulseup /var/run/pulseup && chmod 770 /var/run/pulseup
+RUN mkdir -p /opt/pulseup && chown -R pulseup-worker:pulseup /opt/pulseup && chmod 750 /opt/pulseup
+RUN mkdir -p /var/lib/pulseup && chown -R pulseup-worker:pulseup /var/lib/pulseup && chmod 770 /var/lib/pulseup
 
 # Create log directories with proper permissions
-RUN mkdir -p /var/log/pulseup/deployments && chown -R pulseup-worker:pulseup-worker /var/log/pulseup
+RUN mkdir -p /var/log/pulseup/deployments && chown -R pulseup-worker:pulseup /var/log/pulseup && chmod -R 750 /var/log/pulseup
 
 # Set up Caddy directories with proper ownership
 RUN mkdir -p /etc/caddy /etc/pulseup-agent/caddy /var/lib/caddy && \
-    chown -R pulseup-worker:pulseup-worker /etc/pulseup-agent/caddy /var/lib/caddy
+    chown -R pulseup-worker:pulseup /etc/pulseup-agent/caddy /var/lib/caddy
 
 # Copy the entrypoint scripts
 COPY dind-entrypoint.sh /usr/local/bin/dind-entrypoint.sh
@@ -128,8 +129,8 @@ COPY --from=builder /src/pulseup-worker /app/pulseup-worker
 RUN chmod +x /app/pulseup-supervisor /app/pulseup-worker
 
 # Ensure proper permissions for IPC directory and worker access
-RUN chown -R root:pulseup-worker /var/run/pulseup && chmod 775 /var/run/pulseup
-RUN chown root:pulseup-worker /app/pulseup-worker && chmod 755 /app/pulseup-worker
+RUN chown -R root:pulseup /var/run/pulseup && chmod 775 /var/run/pulseup
+RUN chown root:pulseup /app/pulseup-worker && chmod 755 /app/pulseup-worker
 
 # Copy delve for debug builds (will fail silently if not present)
 COPY --from=builder /go/bin/dlv /app/dlv

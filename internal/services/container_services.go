@@ -35,10 +35,8 @@ type serviceBundle struct {
 	monitoringService     MonitoringService
 	commandImpl           *commandService
 	commandService        CommandService
-	updateImpl            *updateService
-	updateService         UpdateService
-	packageImpl           *PackageServiceImpl
-	packageService        PackageService
+	updateImpl        *updateService
+	updateService     UpdateService
 	agentLogService       AgentLogService
 }
 
@@ -105,9 +103,6 @@ func newServiceBundle(cfg *config.Config, baseLogger *logger.Logger, wsManager W
 	bundle.updateImpl = NewUpdateService(cfg, baseLogger, bundle.commandService, ipcClient).(*updateService)
 	bundle.updateService = bundle.updateImpl
 
-	bundle.packageImpl = NewPackageService(baseLogger)
-	bundle.packageService = bundle.packageImpl
-
 	bundle.agentLogService = NewAgentLogService(baseLogger)
 
 	return bundle
@@ -167,9 +162,6 @@ func (b *serviceBundle) apply(c *ServiceContainer) {
 
 	c.updateSvc = b.updateImpl
 	c.updateService = b.updateService
-
-	c.packageSvc = b.packageImpl
-	c.packageService = b.packageService
 
 	c.agentLogService = b.agentLogService
 }

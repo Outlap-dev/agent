@@ -319,7 +319,6 @@ func (v *RequestValidator) validateServiceName(name string) error {
 		"postgresql":         true,
 		"redis":              true,
 		"mongodb":            true,
-		"pulseup-agent":      true,
 		"pulseup-supervisor": true,
 		"pulseup-worker":     true,
 	}

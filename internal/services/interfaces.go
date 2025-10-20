@@ -106,10 +106,8 @@ type BuildService interface {
 type SystemService interface {
 	GetSystemMetrics(ctx context.Context) (*types.SystemMetrics, error)
 	GetHardwareInfo(ctx context.Context) (*types.HardwareInfo, error)
-	RestartServer(ctx context.Context) error
 	GetDiskUsage(ctx context.Context) (*types.DiskMetrics, error)
 	GetNetworkInfo(ctx context.Context) (*types.NetworkInfo, error)
-	InstallPackage(ctx context.Context, packageName string) error
 }
 
 // DatabaseService handles database operations
@@ -220,18 +218,6 @@ type CommandService interface {
 	ExecuteWhitelistedCommand(ctx context.Context, commandID string, args map[string]string) (*types.CommandResult, error)
 	GetAvailableCommands() []types.WhitelistedCommand
 	IsCommandWhitelisted(commandID string) bool
-}
-
-// PackageService handles system package management operations
-type PackageService interface {
-	GetUpgradablePackages(ctx context.Context) (*types.UpgradablePackages, error)
-	UpdatePackages(ctx context.Context, packageNames []string) (*types.PackageUpdateResult, error)
-	UpdateAllPackages(ctx context.Context) (*types.PackageUpdateResult, error)
-	GetPackageInfo(ctx context.Context, packageName string) (*types.PackageInfo, error)
-
-	// Streaming methods for real-time output
-	UpdatePackagesStream(ctx context.Context, packageNames []string, outputChan chan<- types.PackageLogMessage) (*types.PackageUpdateResult, error)
-	UpdateAllPackagesStream(ctx context.Context, outputChan chan<- types.PackageLogMessage) (*types.PackageUpdateResult, error)
 }
 
 // AgentLogService handles agent log operations

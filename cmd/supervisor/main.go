@@ -61,7 +61,7 @@ func main() {
 	}
 
 	// Create IPC server
-	socketConfig := ipc.DefaultSocketConfig()
+	socketConfig := ipc.DefaultSocketConfigWithGroup(cfg.SocketGroup)
 	ipcServer := ipc.NewServer(socketConfig, mainLogger, supervisorContainer)
 
 	// Start IPC server
@@ -104,12 +104,12 @@ func main() {
 	shutdownComplete := make(chan struct{})
 	go func() {
 		defer close(shutdownComplete)
-		
+
 		// Stop supervisor services
 		if err := supervisorContainer.Shutdown(shutdownCtx); err != nil {
 			mainLogger.Error("Error during supervisor shutdown", "error", err)
 		}
-		
+
 		// Stop IPC server
 		if err := ipcServer.Stop(); err != nil {
 			mainLogger.Error("Error stopping IPC server", "error", err)

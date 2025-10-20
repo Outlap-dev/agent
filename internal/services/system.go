@@ -297,24 +297,6 @@ func extractPrimaryIP(addr string) string {
 	return ip.String()
 }
 
-// RestartServer restarts the server
-func (s *SystemServiceImpl) RestartServer(ctx context.Context) error {
-	s.logger.Info("Restarting server")
-
-	// This is a dangerous operation, so we'll just log it for now
-	// In a real implementation, you might want to:
-	// 1. Gracefully shutdown services
-	// 2. Use systemctl or similar to restart
-	// 3. Have proper authorization checks
-
-	cmd := exec.CommandContext(ctx, "sudo", "reboot")
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("failed to restart server: %w", err)
-	}
-
-	return nil
-}
-
 // GetDiskUsage returns disk usage information
 func (s *SystemServiceImpl) GetDiskUsage(ctx context.Context) (*types.DiskMetrics, error) {
 	diskInfo, err := disk.Usage("/")
@@ -351,25 +333,6 @@ func (s *SystemServiceImpl) GetNetworkInfo(ctx context.Context) (*types.NetworkI
 	return &types.NetworkInfo{
 		Interfaces: networkInterfaces,
 	}, nil
-}
-
-// InstallPackage installs a system package
-func (s *SystemServiceImpl) InstallPackage(ctx context.Context, packageName string) error {
-	s.logger.Info("Installing package", "package", packageName)
-
-	// Detect package manager and install
-	if s.commandExists("apt-get") {
-		cmd := exec.CommandContext(ctx, "sudo", "apt-get", "install", "-y", packageName)
-		return cmd.Run()
-	} else if s.commandExists("yum") {
-		cmd := exec.CommandContext(ctx, "sudo", "yum", "install", "-y", packageName)
-		return cmd.Run()
-	} else if s.commandExists("brew") {
-		cmd := exec.CommandContext(ctx, "brew", "install", packageName)
-		return cmd.Run()
-	}
-
-	return fmt.Errorf("no supported package manager found")
 }
 
 // commandExists checks if a command exists in PATH
