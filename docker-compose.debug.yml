@@ -30,8 +30,7 @@ services:
       - "host.docker.internal:host-gateway"
     privileged: true
     ports:
-      - "2347:2347"  # Supervisor debugger
-      - "2346:2346"  # Worker debugger
+      - "2346:2346"  # Agent debugger
     networks:
       - pulseup-network
     depends_on:

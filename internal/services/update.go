@@ -297,7 +297,7 @@ func (s *updateService) githubAPIError(resp *http.Response) error {
 }
 
 func (s *updateService) artifactName() string {
-	return fmt.Sprintf("pulseup-agent_%s_%s.tar.gz", runtime.GOOS, runtime.GOARCH)
+	return fmt.Sprintf("pulseup-agent_%s_%s", runtime.GOOS, runtime.GOARCH)
 }
 
 func findReleaseAssets(baseName string, assets []githubReleaseAsset) (binary, checksum, signature *githubReleaseAsset) {
@@ -376,7 +376,7 @@ func (s *updateService) DownloadUpdate(ctx context.Context, metadata *types.Upda
 	}
 
 	// Download update file
-	updateFile := filepath.Join(tempDir, fmt.Sprintf("pulseup-agent_%s_%s_%s.tar.gz",
+	updateFile := filepath.Join(tempDir, fmt.Sprintf("pulseup-agent_%s_%s_%s",
 		metadata.Version, runtime.GOOS, runtime.GOARCH))
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, metadata.DownloadURL, nil)

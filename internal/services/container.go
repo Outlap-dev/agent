@@ -183,10 +183,14 @@ func (c *ServiceContainer) Start(ctx context.Context) error {
 		return fmt.Errorf("no client certificate available; provide a join token to enroll the agent")
 	}
 
+	c.logger.Info("Starting WebSocket client with mTLS", "url", c.config.WebSocketURL)
+	
 	if err := c.mtlsClient.StartWithAutoRenewal(ctx); err != nil {
 		return fmt.Errorf("failed to establish mTLS websocket connection: %w", err)
 	}
 
+	c.logger.Info("Waiting for WebSocket connection to establish...")
+	
 	// Wait for initial connection to be established, continuing to retry until success or context cancellation
 	warningInterval := 30 * time.Second
 	waitTicker := time.NewTicker(100 * time.Millisecond)
@@ -197,6 +201,8 @@ func (c *ServiceContainer) Start(ctx context.Context) error {
 
 	for {
 		if c.mtlsClient.IsConnected() {
+			c.logger.Info("WebSocket connection established", 
+				"elapsed", time.Since(firstAttempt).Round(time.Second))
 			break
 		}
 
@@ -205,6 +211,8 @@ func (c *ServiceContainer) Start(ctx context.Context) error {
 			return fmt.Errorf("context cancelled while waiting for connection")
 		case <-waitTicker.C:
 			if time.Since(lastWarning) >= warningInterval {
+				c.logger.Warn("Still waiting for WebSocket connection", 
+					"elapsed", time.Since(firstAttempt).Round(time.Second))
 				lastWarning = time.Now()
 			}
 		}
