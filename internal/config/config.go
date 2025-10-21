@@ -43,6 +43,7 @@ type Config struct {
 	UpdateURL           string
 	UpdatePublicKeyPath string
 	UpdateRepository    string
+	UpdateRequestPath   string
 
 	// mTLS and enrollment configuration
 	CertDir     string
@@ -76,6 +77,7 @@ func Load() (*Config, error) {
 		UpdateURL:                    getEnv("UPDATE_URL", "https://updates.pulseup.io/agent/releases/latest.json"),
 		UpdatePublicKeyPath:          getEnv("UPDATE_PUBLIC_KEY_PATH", "/etc/pulseup-agent/update_public.pem"),
 		UpdateRepository:             resolveUpdateRepository(),
+		UpdateRequestPath:            getEnv("UPDATE_REQUEST_PATH", "/run/pulseup/update.request"),
 
 		// mTLS and enrollment configuration
 		CertDir:     getEnv("CERT_DIR", "/var/lib/pulseup/certs"),

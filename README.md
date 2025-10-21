@@ -9,10 +9,10 @@ The Go agent follows a clean architecture pattern with the following structure:
 ```
 pulseup-agent/
 ├── cmd/
-│   ├── supervisor/      # Privileged supervisor process (runs as root)
-│   └── worker/          # Unprivileged worker process (handles WebSocket connection)
+│   └── agent/           # PulseUp agent entry point
 ├── internal/
 │   ├── config/          # Configuration management  
+│   ├── worker/          # Agent service container
 │   ├── services/        # Business logic services
 │   ├── handlers/        # Command handlers
 │   ├── websocket/       # Modular WebSocket client architecture
@@ -95,9 +95,8 @@ docker-compose logs -f pulseup-agent
 
 #### Local Development
 ```bash
-# Build binaries locally
-go build -o pulseup-supervisor ./cmd/supervisor
-go build -o pulseup-worker ./cmd/worker
+# Build the agent locally
+go build -o pulseup-agent ./cmd/agent
 
 # Run tests
 ./test.sh
@@ -236,61 +235,86 @@ Log levels: DEBUG, INFO, WARN, ERROR
 ## Deployment
 
 ### Systemd Services
-The production install runs as two systemd units: a privileged supervisor and an unprivileged worker. The installer in this repository writes both unit files automatically, but if you need to create them manually you can use the following templates.
+The install script provisions two units: `pulseup-agent.service` (runs as the unprivileged agent user) and `pulseup-agent-updater.service` (a root oneshot triggered by a path unit). Templates are below for reference.
 
-`/etc/systemd/system/pulseup-supervisor.service`
+`/etc/systemd/system/pulseup-agent.service`
 
 ```ini
 [Unit]
-Description=PulseUp Supervisor
+Description=PulseUp Agent
 After=network-online.target docker.service
 Wants=network-online.target
 
 [Service]
 Type=simple
-User=root
-Group=root
+User=pulseup
+Group=pulseup
 EnvironmentFile=/etc/pulseup-agent/config
-ExecStart=/usr/local/bin/pulseup-supervisor
+WorkingDirectory=/opt/pulseup
+ExecStart=/usr/local/bin/pulseup-agent
 Restart=always
 RestartSec=5
-RuntimeDirectory=pulseup
-RuntimeDirectoryMode=0770
-StandardOutput=append:/var/log/pulseup/supervisor.log
-StandardError=append:/var/log/pulseup/supervisor.log
+SupplementaryGroups=docker
+UMask=0027
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/pulseup /var/lib/pulseup /var/log/pulseup /run/pulseup
+StandardOutput=append:/var/log/pulseup/agent.log
+StandardError=append:/var/log/pulseup/agent.log
 
 [Install]
 WantedBy=multi-user.target
 ```
 
-`/etc/systemd/system/pulseup-worker.service`
+`/etc/systemd/system/pulseup-agent-updater.service`
 
 ```ini
 [Unit]
-Description=PulseUp Worker
-After=pulseup-supervisor.service
-Requires=pulseup-supervisor.service
+Description=PulseUp Agent Updater
+After=network-online.target
+Wants=network-online.target
 
 [Service]
-Type=simple
-User=pulseup-worker
-Group=pulseup
-EnvironmentFile=/etc/pulseup-agent/config
-WorkingDirectory=/opt/pulseup
-ExecStart=/usr/local/bin/pulseup-worker
-Restart=always
-RestartSec=5
-SupplementaryGroups=docker
-UMask=0027
-StandardOutput=append:/var/log/pulseup/worker.log
-StandardError=append:/var/log/pulseup/worker.log
+Type=oneshot
+User=root
+Group=root
+Environment="REQUEST_FILE=/run/pulseup/update.request"
+Environment="TARGET_PATH=/usr/local/bin/pulseup-agent"
+Environment="STAGING_DIR=/var/lib/pulseup"
+Environment="PUBLIC_KEY=/etc/pulseup-agent/update_public.pem"
+ExecStart=/usr/local/bin/pulseup-agent-updater
+ExecStartPost=/bin/systemctl restart pulseup-agent.service
+PrivateTmp=true
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+StandardOutput=append:/var/log/pulseup/updater.log
+StandardError=append:/var/log/pulseup/updater.log
+
+[Install]
+WantedBy=multi-user.target
+```
+
+And the path unit that triggers the updater whenever `/run/pulseup/update.request` changes:
+
+`/etc/systemd/system/pulseup-agent-update.path`
+
+```ini
+[Unit]
+Description=Trigger PulseUp agent updater when a request is received
+
+[Path]
+PathChanged=/run/pulseup/update.request
+Unit=pulseup-agent-updater.service
 
 [Install]
 WantedBy=multi-user.target
 ```
 
 ### Docker
-For development the provided `docker-compose.yml` spins up the supervisor and worker processes inside a single container. Refer to that file if you prefer a containerised workflow.
+For development the provided `docker-compose.yml` runs the single-process agent inside a container, wiring in Docker and Nixpacks conveniences.
 
 ## Testing
 

@@ -25,7 +25,6 @@ type ServiceContainer struct {
 	config     *config.Config
 	logger     *logger.Logger // Logger for container's own logs
 	baseLogger *logger.Logger // Clean logger to pass to services
-	ipcClient  IPCClient      // Optional IPC client for worker processes
 
 	runtime        *bootstrap.RuntimeEnvironment
 	servicesBundle *serviceBundle
@@ -93,21 +92,6 @@ func NewServiceContainer(cfg *config.Config, logger *logger.Logger) (*ServiceCon
 	return container, nil
 }
 
-// NewServiceContainerWithIPC creates a new service container with IPC client for worker processes
-func NewServiceContainerWithIPC(cfg *config.Config, logger *logger.Logger, ipcClient IPCClient) (*ServiceContainer, error) {
-	runtimeEnv := bootstrap.NewRuntimeEnvironment(cfg, logger)
-
-	container := &ServiceContainer{
-		config:     cfg,
-		logger:     logger.With("service", "service_container"),
-		baseLogger: logger,
-		ipcClient:  ipcClient,
-		runtime:    runtimeEnv,
-	}
-
-	return container, nil
-}
-
 // Initialize sets up all services and their dependencies
 func (c *ServiceContainer) Initialize(ctx context.Context) error {
 	c.logger.Info("Initializing service container")
@@ -129,7 +113,7 @@ func (c *ServiceContainer) Initialize(ctx context.Context) error {
 	}
 
 	// Initialize business services via bundle
-	c.servicesBundle = newServiceBundle(c.config, c.baseLogger, c.wsAdapter, c.logger, c.ipcClient)
+	c.servicesBundle = newServiceBundle(c.config, c.baseLogger, c.wsAdapter, c.logger)
 	c.servicesBundle.apply(c)
 
 	if c.sessionManager == nil && c.updateService != nil {

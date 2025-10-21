@@ -3,8 +3,6 @@ package handlers
 import (
 	"context"
 	"encoding/json"
-	"os"
-	"path/filepath"
 
 	"pulseup-agent-go/internal/update"
 	"pulseup-agent-go/pkg/logger"
@@ -107,19 +105,8 @@ func (h *UpdateHandler) Apply(ctx context.Context, data json.RawMessage) (*types
 		h.logger.Warn("Forced update version differs from available metadata", "requested", req.Version, "available", metadata.Version)
 	}
 
-	updateFile, err := updateService.DownloadUpdate(ctx, metadata)
-	if err != nil {
-		h.logger.Error("Failed to download update", "error", err)
-		return &types.CommandResponse{Success: false, Error: "Failed to download update: " + err.Error()}, nil
-	}
-	defer os.RemoveAll(filepath.Dir(updateFile))
-
-	if err := updateService.ValidateUpdate(ctx, updateFile, metadata); err != nil {
-		h.logger.Error("Update validation failed", "error", err)
-		return &types.CommandResponse{Success: false, Error: "Update validation failed: " + err.Error()}, nil
-	}
-
-	if err := updateService.ApplyUpdate(ctx, metadata, updateFile); err != nil {
+	applyOpts := &types.UpdateApplyOptions{VersionOverride: req.Version, Force: req.Force}
+	if err := updateService.ApplyUpdate(ctx, metadata, applyOpts); err != nil {
 		h.logger.Error("Failed to apply update", "error", err)
 		return &types.CommandResponse{Success: false, Error: "Failed to apply update: " + err.Error()}, nil
 	}

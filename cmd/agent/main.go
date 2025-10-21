@@ -1,4 +1,4 @@
-// PulseUp Agent Supervisor - Privileged process for handling system operations
+// PulseUp Agent - single-process unprivileged agent
 package main
 
 import (
@@ -10,15 +10,14 @@ import (
 	"time"
 
 	"pulseup-agent-go/internal/config"
-	"pulseup-agent-go/internal/ipc"
-	"pulseup-agent-go/internal/supervisor"
+	"pulseup-agent-go/internal/worker"
 	"pulseup-agent-go/pkg/logger"
 )
 
 func main() {
-	// Check if running as root
-	if os.Getuid() != 0 {
-		fmt.Fprintf(os.Stderr, "Error: supervisor must run as root\n")
+	// Ensure we're NOT running as root
+	if os.Getuid() == 0 {
+		fmt.Fprintf(os.Stderr, "Error: pulseup-agent must NOT run as root for security\n")
 		os.Exit(1)
 	}
 
@@ -35,52 +34,40 @@ func main() {
 		logLevel = logger.LogLevelDebug
 	}
 	mainLogger := logger.NewWithLevel(logLevel)
-	mainLogger.Info("Starting PulseUp Agent Supervisor",
+	mainLogger.Info("Starting PulseUp Agent",
 		"version", config.GetVersionString(),
 		"build_date", config.BuildDate,
 		"git_commit", config.GitCommit,
 		"pid", os.Getpid(),
 		"uid", os.Getuid(),
+		"gid", os.Getgid(),
 	)
 
 	// Create context for graceful shutdown
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	// Create supervisor service container
-	supervisorContainer, err := supervisor.NewContainer(cfg, mainLogger)
+	// Create agent service container (no supervisor IPC)
+	agentContainer, err := worker.NewContainer(cfg, mainLogger, nil)
 	if err != nil {
-		mainLogger.Error("Failed to create supervisor container", "error", err)
+		mainLogger.Error("Failed to create agent container", "error", err)
 		os.Exit(1)
 	}
 
-	// Initialize supervisor services
-	if err := supervisorContainer.Initialize(ctx); err != nil {
-		mainLogger.Error("Failed to initialize supervisor services", "error", err)
+	// Initialize services
+	if err := agentContainer.Initialize(ctx); err != nil {
+		mainLogger.Error("Failed to initialize agent services", "error", err)
 		os.Exit(1)
 	}
 
-	// Create IPC server
-	socketConfig := ipc.DefaultSocketConfigWithGroup(cfg.SocketGroup)
-	ipcServer := ipc.NewServer(socketConfig, mainLogger, supervisorContainer)
-
-	// Start IPC server
-	if err := ipcServer.Start(ctx); err != nil {
-		mainLogger.Error("Failed to start IPC server", "error", err)
-		os.Exit(1)
-	}
-	defer ipcServer.Stop()
-
-	// Set up signal handling for graceful shutdown
+	// Handle graceful shutdown
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM, syscall.SIGQUIT)
 
-	mainLogger.Info("Supervisor ready and listening for requests")
-
-	// Start supervisor services
+	// Start services
 	serviceErrChan := make(chan error, 1)
 	go func() {
-		if err := supervisorContainer.Start(ctx); err != nil {
+		if err := agentContainer.Start(ctx); err != nil {
 			serviceErrChan <- err
 		}
 	}()
@@ -90,7 +77,7 @@ func main() {
 	case sig := <-sigChan:
 		mainLogger.Info("Received shutdown signal", "signal", sig)
 	case err := <-serviceErrChan:
-		mainLogger.Error("Supervisor service error", "error", err)
+		mainLogger.Error("Agent service error", "error", err)
 	}
 
 	// Initiate graceful shutdown
@@ -105,14 +92,8 @@ func main() {
 	go func() {
 		defer close(shutdownComplete)
 
-		// Stop supervisor services
-		if err := supervisorContainer.Shutdown(shutdownCtx); err != nil {
-			mainLogger.Error("Error during supervisor shutdown", "error", err)
-		}
-
-		// Stop IPC server
-		if err := ipcServer.Stop(); err != nil {
-			mainLogger.Error("Error stopping IPC server", "error", err)
+		if err := agentContainer.Shutdown(shutdownCtx); err != nil {
+			mainLogger.Error("Error during agent shutdown", "error", err)
 		}
 	}()
 
@@ -124,5 +105,5 @@ func main() {
 		mainLogger.Warn("Shutdown timeout exceeded, forcing exit")
 	}
 
-	mainLogger.Info("Supervisor stopped")
+	mainLogger.Info("Agent stopped")
 }

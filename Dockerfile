@@ -30,31 +30,20 @@ RUN if [ "$ENABLE_DEBUG" = "true" ]; then \
     touch /go/bin/dlv; \
     fi
 
-# Build both supervisor and worker applications for Linux
+# Build agent application for Linux
 RUN if [ "$ENABLE_DEBUG" = "true" ]; then \
     CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
     -gcflags="all=-N -l" \
     -ldflags "-X pulseup-agent-go/internal/config.Version=${VERSION} \
     -X pulseup-agent-go/internal/config.BuildDate=${BUILD_DATE} \
     -X pulseup-agent-go/internal/config.GitCommit=${GIT_COMMIT}" \
-    -o pulseup-supervisor ./cmd/supervisor && \
-    CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
-    -gcflags="all=-N -l" \
-    -ldflags "-X pulseup-agent-go/internal/config.Version=${VERSION} \
-    -X pulseup-agent-go/internal/config.BuildDate=${BUILD_DATE} \
-    -X pulseup-agent-go/internal/config.GitCommit=${GIT_COMMIT}" \
-    -o pulseup-worker ./cmd/worker; \
+    -o pulseup-agent ./cmd/agent; \
     else \
     CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
     -ldflags "-X pulseup-agent-go/internal/config.Version=${VERSION} \
     -X pulseup-agent-go/internal/config.BuildDate=${BUILD_DATE} \
     -X pulseup-agent-go/internal/config.GitCommit=${GIT_COMMIT}" \
-    -o pulseup-supervisor ./cmd/supervisor && \
-    CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
-    -ldflags "-X pulseup-agent-go/internal/config.Version=${VERSION} \
-    -X pulseup-agent-go/internal/config.BuildDate=${BUILD_DATE} \
-    -X pulseup-agent-go/internal/config.GitCommit=${GIT_COMMIT}" \
-    -o pulseup-worker ./cmd/worker; \
+    -o pulseup-agent ./cmd/agent; \
     fi
 
 # Production stage
@@ -84,35 +73,35 @@ RUN apt-get update && apt-get install -y \
 # Install Nixpacks (for compatibility with Python agent functionality)
 RUN curl -sSL https://nixpacks.com/install.sh | bash
 
-# Create a non-root user for the worker process
+# Create a non-root user for the agent process
 RUN groupadd --system pulseup && \
-    useradd --create-home --shell /bin/bash --uid 1000 --gid pulseup pulseup-worker
+    useradd --create-home --shell /bin/bash --uid 1000 --gid pulseup pulseup
 
-# Add pulseup-worker to docker group for container operations
-RUN usermod -aG docker pulseup-worker
+# Add pulseup user to docker group for container operations
+RUN usermod -aG docker pulseup
 
 # Create Docker config directories and set permissions
-RUN mkdir -p /root/.docker /home/pulseup-worker/.docker \
+RUN mkdir -p /root/.docker /home/pulseup/.docker \
     && echo '{}' > /root/.docker/config.json \
-    && echo '{}' > /home/pulseup-worker/.docker/config.json \
-    && chmod 644 /root/.docker/config.json /home/pulseup-worker/.docker/config.json \
-    && chown -R pulseup-worker:pulseup /home/pulseup-worker/.docker
+    && echo '{}' > /home/pulseup/.docker/config.json \
+    && chmod 644 /root/.docker/config.json /home/pulseup/.docker/config.json \
+    && chown -R pulseup:pulseup /home/pulseup/.docker
 
-# Ensure processes default to the pulseup-worker home when switching user
-ENV HOME=/home/pulseup-worker
+# Ensure processes default to the pulseup user home when switching user
+ENV HOME=/home/pulseup
 
-# Create app directory, IPC directory, and apps directory
+# Create app directory and runtime directories
 WORKDIR /app
 RUN mkdir -p /var/run/pulseup && chown root:pulseup /var/run/pulseup && chmod 770 /var/run/pulseup
-RUN mkdir -p /opt/pulseup && chown -R pulseup-worker:pulseup /opt/pulseup && chmod 750 /opt/pulseup
-RUN mkdir -p /var/lib/pulseup && chown -R pulseup-worker:pulseup /var/lib/pulseup && chmod 770 /var/lib/pulseup
+RUN mkdir -p /opt/pulseup && chown -R pulseup:pulseup /opt/pulseup && chmod 750 /opt/pulseup
+RUN mkdir -p /var/lib/pulseup && chown -R pulseup:pulseup /var/lib/pulseup && chmod 770 /var/lib/pulseup
 
 # Create log directories with proper permissions
-RUN mkdir -p /var/log/pulseup/deployments && chown -R pulseup-worker:pulseup /var/log/pulseup && chmod -R 750 /var/log/pulseup
+RUN mkdir -p /var/log/pulseup/deployments && chown -R pulseup:pulseup /var/log/pulseup && chmod -R 750 /var/log/pulseup
 
 # Set up Caddy directories with proper ownership
 RUN mkdir -p /etc/caddy /etc/pulseup-agent/caddy /var/lib/caddy && \
-    chown -R pulseup-worker:pulseup /etc/pulseup-agent/caddy /var/lib/caddy
+    chown -R pulseup:pulseup /etc/pulseup-agent/caddy /var/lib/caddy
 
 # Copy the entrypoint scripts
 COPY dind-entrypoint.sh /usr/local/bin/dind-entrypoint.sh
@@ -123,14 +112,12 @@ RUN chmod +x /usr/local/bin/debug-entrypoint.sh
 # Build argument to determine if this is a debug build
 ARG ENABLE_DEBUG=false
 
-# Copy the compiled binaries from builder stage
-COPY --from=builder /src/pulseup-supervisor /app/pulseup-supervisor
-COPY --from=builder /src/pulseup-worker /app/pulseup-worker
-RUN chmod +x /app/pulseup-supervisor /app/pulseup-worker
+# Copy the compiled binary from builder stage
+COPY --from=builder /src/pulseup-agent /app/pulseup-agent
+RUN chmod +x /app/pulseup-agent
 
-# Ensure proper permissions for IPC directory and worker access
+# Ensure proper permissions for runtime directory access
 RUN chown -R root:pulseup /var/run/pulseup && chmod 775 /var/run/pulseup
-RUN chown root:pulseup /app/pulseup-worker && chmod 755 /app/pulseup-worker
 
 # Copy delve for debug builds (will fail silently if not present)
 COPY --from=builder /go/bin/dlv /app/dlv

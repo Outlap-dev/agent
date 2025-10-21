@@ -12,8 +12,8 @@ ensure_caddy_permissions() {
         fi
     done
 
-    # Set ownership so the pulseup-worker process can manage domain state files
-    if ! chown -R pulseup-worker:pulseup-worker "$caddy_root" /var/lib/caddy /var/log/caddy 2>/dev/null; then
+    # Set ownership so the pulseup agent process can manage domain state files
+    if ! chown -R pulseup:pulseup "$caddy_root" /var/lib/caddy /var/log/caddy 2>/dev/null; then
         echo "Warning: failed to adjust ownership for Caddy directories"
     fi
 
@@ -41,7 +41,7 @@ if [ -S "$SOCKET_PATH" ]; then
             groupadd -g "$SOCK_GID" "$SOCK_GROUP_NAME" 2>/dev/null || true
         fi
         if [ -n "$SOCK_GROUP_NAME" ]; then
-            usermod -aG "$SOCK_GROUP_NAME" pulseup-worker 2>/dev/null || true
+            usermod -aG "$SOCK_GROUP_NAME" pulseup 2>/dev/null || true
             usermod -aG "$SOCK_GROUP_NAME" root 2>/dev/null || true
         fi
         if [ -n "$SOCK_GROUP_NAME" ]; then
@@ -54,9 +54,9 @@ if [ -S "$SOCKET_PATH" ]; then
     if ! docker info >/dev/null 2>&1; then
         DOCKER_INFO_OUTPUT=$(docker info 2>&1 || true)
         if echo "$DOCKER_INFO_OUTPUT" | grep -qi "permission denied"; then
-            echo "Permission denied when accessing Docker socket as root. Retrying as pulseup-worker user..."
-            if sudo -E -H -u pulseup-worker docker info >/dev/null 2>&1; then
-                echo "Docker daemon accessible as pulseup-worker user"
+            echo "Permission denied when accessing Docker socket as root. Retrying as pulseup user..."
+            if sudo -E -H -u pulseup docker info >/dev/null 2>&1; then
+                echo "Docker daemon accessible as pulseup user"
             else
                 echo "Docker socket mounted but inaccessible – starting internal Docker daemon fallback"
                 export DOCKERD_HOST="unix:///var/run/pulseup-dind.sock"
@@ -96,11 +96,8 @@ ensure_caddy_permissions
 # Signal handler for graceful shutdown
 shutdown() {
     echo "Received shutdown signal, stopping processes..."
-    if [ -n "$SUPERVISOR_PID" ]; then
-        kill $SUPERVISOR_PID 2>/dev/null || true
-    fi
-    if [ -n "$WORKER_PID" ]; then
-        kill $WORKER_PID 2>/dev/null || true
+    if [ -n "$AGENT_PID" ]; then
+        kill $AGENT_PID 2>/dev/null || true
     fi
     exit 0
 }
@@ -109,46 +106,18 @@ shutdown() {
 trap shutdown SIGTERM SIGINT
 
 # Check if debug mode is enabled
+export HOME=/home/pulseup
+
 if [ "$ENABLE_DEBUG" = "true" ]; then
-    echo "Starting two-process architecture with debugger..."
-    echo "Starting supervisor with debugger on port 2347..."
-    /app/dlv --listen=:2347 --headless=true --api-version=2 --accept-multiclient exec /app/pulseup-supervisor &
-    SUPERVISOR_PID=$!
-    
-    # Wait for supervisor to initialize
-    echo "Waiting for supervisor to initialize..."
-    sleep 3
-    
-    echo "Starting worker with debugger on port 2346 (as pulseup-worker user)..."
-    # Preserve environment variables when switching users
-    # Ensure HOME is set to the target user's home so Docker/Nixpacks use correct config path
-    export HOME=/home/pulseup-worker
-    sudo -E -H -u pulseup-worker \
-        /app/dlv --listen=:2346 --headless=true --api-version=2 --accept-multiclient exec /app/pulseup-worker &
-    WORKER_PID=$!
-    
-    echo "Both processes started in debug mode"
-    echo "Supervisor debugger: :2347"
-    echo "Worker debugger: :2346"
+    echo "Starting pulseup-agent with debugger on port 2346..."
+    sudo -E -H -u pulseup \
+        /app/dlv --listen=:2346 --headless=true --api-version=2 --accept-multiclient exec /app/pulseup-agent &
+    AGENT_PID=$!
+    echo "Debugger listening on :2346"
 else
-    echo "Starting two-process architecture normally..."
-    echo "Starting supervisor..."
-    /app/pulseup-supervisor &
-    SUPERVISOR_PID=$!
-    
-    # Wait for supervisor to initialize
-    echo "Waiting for supervisor to initialize..."
-    sleep 3
-    
-    echo "Starting worker (as pulseup-worker user)..."
-    # Preserve environment variables when switching users
-    # Ensure HOME is set so that tooling doesn't attempt to read /root/.docker
-    export HOME=/home/pulseup-worker
-    sudo -E -H -u pulseup-worker /app/pulseup-worker &
-    WORKER_PID=$!
-    
-    echo "Both processes started"
+    echo "Starting pulseup-agent..."
+    sudo -E -H -u pulseup /app/pulseup-agent &
+    AGENT_PID=$!
 fi
 
-# Wait for both processes
-wait $SUPERVISOR_PID $WORKER_PID 
+wait $AGENT_PID

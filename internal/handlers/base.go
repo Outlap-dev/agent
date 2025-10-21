@@ -173,9 +173,7 @@ type DatabaseService interface {
 
 type UpdateService interface {
 	CheckForUpdate(ctx context.Context) (*types.UpdateMetadata, error)
-	DownloadUpdate(ctx context.Context, metadata *types.UpdateMetadata) (string, error)
-	ValidateUpdate(ctx context.Context, filePath string, metadata *types.UpdateMetadata) error
-	ApplyUpdate(ctx context.Context, metadata *types.UpdateMetadata, filePath string) error
+	ApplyUpdate(ctx context.Context, metadata *types.UpdateMetadata, opts *types.UpdateApplyOptions) error
 	StartAutoUpdateLoop(ctx context.Context) error
 	StopAutoUpdateLoop() error
 }

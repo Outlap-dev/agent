@@ -35,12 +35,12 @@ type serviceBundle struct {
 	monitoringService     MonitoringService
 	commandImpl           *commandService
 	commandService        CommandService
-	updateImpl        *updateService
-	updateService     UpdateService
+	updateImpl            *updateService
+	updateService         UpdateService
 	agentLogService       AgentLogService
 }
 
-func newServiceBundle(cfg *config.Config, baseLogger *logger.Logger, wsManager WebSocketManager, containerLogger *logger.Logger, ipcClient IPCClient) *serviceBundle {
+func newServiceBundle(cfg *config.Config, baseLogger *logger.Logger, wsManager WebSocketManager, containerLogger *logger.Logger) *serviceBundle {
 	bundle := &serviceBundle{}
 
 	bundle.dockerImpl = NewDockerService(baseLogger)
@@ -100,7 +100,7 @@ func newServiceBundle(cfg *config.Config, baseLogger *logger.Logger, wsManager W
 	bundle.commandImpl = NewCommandService(baseLogger, bundle.dockerService, bundle.systemService).(*commandService)
 	bundle.commandService = bundle.commandImpl
 
-	bundle.updateImpl = NewUpdateService(cfg, baseLogger, bundle.commandService, ipcClient).(*updateService)
+	bundle.updateImpl = NewUpdateService(cfg, baseLogger, bundle.commandService).(*updateService)
 	bundle.updateService = bundle.updateImpl
 
 	bundle.agentLogService = NewAgentLogService(baseLogger)

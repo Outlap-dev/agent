@@ -808,6 +808,13 @@ type UpdateMetadata struct {
 	Changelog        string    `json:"changelog,omitempty"`
 }
 
+// UpdateApplyOptions controls how an update should be applied.
+type UpdateApplyOptions struct {
+	VersionOverride string `json:"version_override,omitempty"`
+	Force           bool   `json:"force,omitempty"`
+	CustomURL       string `json:"custom_url,omitempty"`
+}
+
 // UpdateConfig represents configuration for agent updates
 type UpdateConfig struct {
 	Enabled             bool   `json:"enabled"`

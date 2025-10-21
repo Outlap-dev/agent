@@ -3,19 +3,12 @@ package services
 import (
 	"context"
 
-	"pulseup-agent-go/internal/ipc"
 	wscontracts "pulseup-agent-go/pkg/contracts/websocket"
 	"pulseup-agent-go/pkg/types"
 
 	dockertypes "github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
 )
-
-// IPCClient interface for IPC operations (used in worker processes)
-type IPCClient interface {
-	SendPrivilegedRequest(ctx context.Context, operation ipc.OperationType, args map[string]interface{}) (*ipc.PrivilegedResponse, error)
-	IsConnected() bool
-}
 
 // WebSocketEmitter provides minimal capabilities for sending events to the backend.
 type WebSocketEmitter = types.WebSocketEmitter
@@ -206,9 +199,7 @@ type DockerComposeService interface {
 // UpdateService handles agent self-updates
 type UpdateService interface {
 	CheckForUpdate(ctx context.Context) (*types.UpdateMetadata, error)
-	DownloadUpdate(ctx context.Context, metadata *types.UpdateMetadata) (string, error)
-	ValidateUpdate(ctx context.Context, filePath string, metadata *types.UpdateMetadata) error
-	ApplyUpdate(ctx context.Context, metadata *types.UpdateMetadata, filePath string) error
+	ApplyUpdate(ctx context.Context, metadata *types.UpdateMetadata, opts *types.UpdateApplyOptions) error
 	StartAutoUpdateLoop(ctx context.Context) error
 	StopAutoUpdateLoop() error
 }

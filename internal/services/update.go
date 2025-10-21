@@ -18,7 +18,6 @@ import (
 	"time"
 
 	"pulseup-agent-go/internal/config"
-	"pulseup-agent-go/internal/ipc"
 	"pulseup-agent-go/internal/update"
 	"pulseup-agent-go/pkg/logger"
 	"pulseup-agent-go/pkg/types"
@@ -30,7 +29,6 @@ type updateService struct {
 	commandService   CommandService
 	httpClient       *http.Client
 	validator        *update.Validator
-	ipcClient        IPCClient
 	repoOwner        string
 	repoName         string
 	apiBaseURL       string
@@ -64,7 +62,7 @@ type githubReleaseAsset struct {
 	BrowserDownloadURL string `json:"browser_download_url"`
 }
 
-func NewUpdateService(cfg *config.Config, logger *logger.Logger, commandService CommandService, ipcClient IPCClient) UpdateService {
+func NewUpdateService(cfg *config.Config, logger *logger.Logger, commandService CommandService) UpdateService {
 	validator, err := update.NewValidator(cfg.UpdatePublicKeyPath)
 	if err != nil {
 		logger.Error("Failed to initialize update validator", "error", err)
@@ -87,7 +85,6 @@ func NewUpdateService(cfg *config.Config, logger *logger.Logger, commandService 
 			Timeout: 30 * time.Second,
 		},
 		validator:  validator,
-		ipcClient:  ipcClient,
 		repoOwner:  owner,
 		repoName:   repo,
 		apiBaseURL: githubAPIBase,
@@ -448,7 +445,7 @@ func (s *updateService) ValidateUpdate(ctx context.Context, filePath string, met
 	return nil
 }
 
-func (s *updateService) ApplyUpdate(ctx context.Context, metadata *types.UpdateMetadata, filePath string) error {
+func (s *updateService) ApplyUpdate(ctx context.Context, metadata *types.UpdateMetadata, opts *types.UpdateApplyOptions) error {
 	if metadata == nil {
 		return fmt.Errorf("update metadata is required")
 	}
@@ -460,94 +457,78 @@ func (s *updateService) ApplyUpdate(ctx context.Context, metadata *types.UpdateM
 	s.updateInProgress = true
 	defer func() { s.updateInProgress = false }()
 
-	s.logger.Info("Applying update", "version", metadata.Version, "file", filePath)
+	s.logger.Info("Applying update", "version", metadata.Version)
 
-	if err := s.applyViaSupervisor(ctx, metadata, filePath); err == nil {
-		return nil
-	} else if err != nil {
-		s.logger.Warn("Supervisor update attempt failed, falling back to local installation", "error", err)
+	// Download the update first
+	updateFile, err := s.DownloadUpdate(ctx, metadata)
+	if err != nil {
+		return fmt.Errorf("failed to download update: %w", err)
+	}
+	defer os.RemoveAll(filepath.Dir(updateFile))
+
+	// Validate the update
+	if err := s.ValidateUpdate(ctx, updateFile, metadata); err != nil {
+		return fmt.Errorf("update validation failed: %w", err)
 	}
 
-	return s.applyLocally(ctx, metadata, filePath)
+	// Write update request for systemd path-triggered updater
+	return s.triggerSystemdUpdate(ctx, metadata, updateFile)
 }
 
-func (s *updateService) applyViaSupervisor(ctx context.Context, metadata *types.UpdateMetadata, filePath string) error {
-	if s.ipcClient == nil {
-		return fmt.Errorf("supervisor connection unavailable")
-	}
-	if !s.ipcClient.IsConnected() {
-		return fmt.Errorf("supervisor not connected")
-	}
-
-	args := map[string]interface{}{
-		"update_file_path":  filePath,
-		"checksum_manifest": metadata.ChecksumManifest,
-		"signature":         metadata.Signature,
-		"version":           metadata.Version,
+// triggerSystemdUpdate prepares update files and triggers systemd path-based updater
+func (s *updateService) triggerSystemdUpdate(ctx context.Context, metadata *types.UpdateMetadata, filePath string) error {
+	// Extract the update archive to staging directory
+	stagingDir := "/var/lib/pulseup"
+	if err := os.MkdirAll(stagingDir, 0755); err != nil {
+		return fmt.Errorf("failed to create staging directory: %w", err)
 	}
 
-	resp, err := s.ipcClient.SendPrivilegedRequest(ctx, ipc.OpAgentUpdate, args)
-	if err != nil {
-		return err
-	}
-	if resp == nil {
-		return fmt.Errorf("received empty response from supervisor")
-	}
-	if !resp.Success {
-		if resp.Error != "" {
-			return fmt.Errorf(resp.Error)
-		}
-		return fmt.Errorf("supervisor rejected update request")
-	}
-
-	s.logger.Info("Supervisor installed update", "version", metadata.Version)
-	return nil
-}
-
-func (s *updateService) applyLocally(ctx context.Context, metadata *types.UpdateMetadata, filePath string) error {
-	// Local installation is a fallback path for environments without the supervisor IPC.
-	currentExe, err := os.Executable()
-	if err != nil {
-		return fmt.Errorf("failed to get current executable: %w", err)
-	}
-
-	currentExe, err = filepath.EvalSymlinks(currentExe)
-	if err != nil {
-		return fmt.Errorf("failed to resolve executable path: %w", err)
-	}
-
-	tempDir := filepath.Dir(filePath)
-	if err := s.extractArchive(filePath, tempDir); err != nil {
+	// Extract archive
+	if err := s.extractArchive(filePath, stagingDir); err != nil {
 		return fmt.Errorf("failed to extract update: %w", err)
 	}
 
-	newBinary := filepath.Join(tempDir, "pulseup-agent")
+	newBinary := filepath.Join(stagingDir, "pulseup-agent")
 	if _, err := os.Stat(newBinary); err != nil {
 		return fmt.Errorf("new binary not found in archive: %w", err)
 	}
 
-	backupPath := currentExe + ".bak"
-	if err := s.copyFile(currentExe, backupPath); err != nil {
-		return fmt.Errorf("failed to backup current binary: %w", err)
+	// Move binary to staging location expected by updater
+	stagingBinary := filepath.Join(stagingDir, "pulseup-agent.new")
+	if err := os.Rename(newBinary, stagingBinary); err != nil {
+		return fmt.Errorf("failed to move binary to staging: %w", err)
 	}
 
-	if err := os.Chmod(newBinary, 0755); err != nil {
+	if err := os.Chmod(stagingBinary, 0755); err != nil {
 		return fmt.Errorf("failed to set executable permissions: %w", err)
 	}
 
-	if err := s.replaceFile(newBinary, currentExe); err != nil {
-		s.copyFile(backupPath, currentExe)
-		return fmt.Errorf("failed to replace binary: %w", err)
+	// Write checksum file
+	checksumFile := stagingBinary + ".sha256"
+	if err := os.WriteFile(checksumFile, []byte(metadata.SHA256+"  pulseup-agent.new\n"), 0644); err != nil {
+		return fmt.Errorf("failed to write checksum file: %w", err)
 	}
 
-	s.logger.Info("Local update applied, restarting agent", "version", metadata.Version)
-
-	if _, err := s.commandService.ExecuteWhitelistedCommand(ctx, "agent.restart", nil); err != nil {
-		s.logger.Error("Failed to restart agent after local update", "error", err)
-		s.copyFile(backupPath, currentExe)
-		return fmt.Errorf("failed to restart agent: %w", err)
+	// Write signature file
+	signatureFile := checksumFile + ".sig"
+	if err := os.WriteFile(signatureFile, []byte(metadata.Signature), 0644); err != nil {
+		return fmt.Errorf("failed to write signature file: %w", err)
 	}
 
+	// Trigger systemd path watcher by writing update request
+	updateRequestPath := "/run/pulseup/update.request"
+	if err := os.MkdirAll(filepath.Dir(updateRequestPath), 0755); err != nil {
+		return fmt.Errorf("failed to create run directory: %w", err)
+	}
+
+	// Write download URL to request file (in case updater needs to re-fetch)
+	updateRequest := fmt.Sprintf("version=%s\nurl=%s\nchecksum=%s\n",
+		metadata.Version, metadata.DownloadURL, metadata.SHA256)
+	if err := os.WriteFile(updateRequestPath, []byte(updateRequest), 0644); err != nil {
+		return fmt.Errorf("failed to write update request: %w", err)
+	}
+
+	s.logger.Info("Systemd updater triggered", "version", metadata.Version, "staging", stagingBinary)
 	return nil
 }
 
@@ -659,22 +640,8 @@ func (s *updateService) performUpdateCheck(ctx context.Context) {
 		return
 	}
 
-	// Download update
-	updateFile, err := s.DownloadUpdate(ctx, metadata)
-	if err != nil {
-		s.logger.Error("Failed to download update", "error", err)
-		return
-	}
-	defer os.RemoveAll(filepath.Dir(updateFile))
-
-	// Validate update
-	if err := s.ValidateUpdate(ctx, updateFile, metadata); err != nil {
-		s.logger.Error("Update validation failed", "error", err)
-		return
-	}
-
-	// Apply update
-	if err := s.ApplyUpdate(ctx, metadata, updateFile); err != nil {
+	// Apply update (downloads and validates internally)
+	if err := s.ApplyUpdate(ctx, metadata, nil); err != nil {
 		s.logger.Error("Failed to apply update", "error", err)
 		return
 	}

@@ -6,41 +6,37 @@ import (
 	"fmt"
 
 	"pulseup-agent-go/internal/config"
-	"pulseup-agent-go/internal/ipc"
 	"pulseup-agent-go/internal/services"
 	"pulseup-agent-go/pkg/logger"
 )
 
-// Container manages all unprivileged services in the worker process
+// Container manages all unprivileged services in the agent process
 type Container struct {
 	config    *config.Config
 	logger    *logger.Logger
-	ipcClient *ipc.Client
 
-	// Service container (modified to use IPC)
+	// Service container
 	serviceContainer *services.ServiceContainer
 }
 
-// NewContainer creates a new worker service container
-func NewContainer(cfg *config.Config, logger *logger.Logger, ipcClient *ipc.Client) (*Container, error) {
+// NewContainer creates a new agent service container
+func NewContainer(cfg *config.Config, logger *logger.Logger, _ interface{}) (*Container, error) {
 	return &Container{
 		config:    cfg,
-		logger:    logger.With("component", "worker_container"),
-		ipcClient: ipcClient,
+		logger:    logger.With("component", "agent_container"),
 	}, nil
 }
 
-// Initialize sets up all unprivileged services
+// Initialize sets up all agent services
 func (c *Container) Initialize(ctx context.Context) error {
-	c.logger.Info("Initializing worker services")
+	c.logger.Info("Initializing agent services")
 
-	// Create modified service container that uses IPC for privileged operations
-	serviceContainer, err := services.NewServiceContainerWithIPC(c.config, c.logger, c.ipcClient)
+	serviceContainer, err := services.NewServiceContainer(c.config, c.logger)
 	if err != nil {
 		return fmt.Errorf("failed to create service container: %w", err)
 	}
 
-	// Initialize with worker-specific modifications
+	// Initialize services
 	if err := serviceContainer.Initialize(ctx); err != nil {
 		return fmt.Errorf("failed to initialize service container: %w", err)
 	}
@@ -50,20 +46,20 @@ func (c *Container) Initialize(ctx context.Context) error {
 	return nil
 }
 
-// Start starts all worker services including WebSocket communication
+// Start starts all agent services including WebSocket communication
 func (c *Container) Start(ctx context.Context) error {
 	// Start the service container (which handles WebSocket connections)
 	if err := c.serviceContainer.Start(ctx); err != nil {
 		return fmt.Errorf("failed to start service container: %w", err)
 	}
 
-	c.logger.Info("Worker services started successfully")
+	c.logger.Info("Agent services started successfully")
 	return nil
 }
 
-// Shutdown gracefully shuts down all worker services
+// Shutdown gracefully shuts down all agent services
 func (c *Container) Shutdown(ctx context.Context) error {
-	c.logger.Info("Shutting down worker services")
+	c.logger.Info("Shutting down agent services")
 
 	// Stop service container
 	if c.serviceContainer != nil {
@@ -72,6 +68,6 @@ func (c *Container) Shutdown(ctx context.Context) error {
 		}
 	}
 
-	c.logger.Info("Worker services shut down")
+	c.logger.Info("Agent services shut down")
 	return nil
 }
