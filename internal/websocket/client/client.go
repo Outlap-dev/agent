@@ -124,7 +124,6 @@ func (c *WebSocketClient) setupMessageCallbacks() {
 
 		case "init_response":
 			if status, ok := data["status"].(string); ok {
-				c.logger.Info("Initialization response", "status", status)
 				if status == "success" || status == "registered" {
 					c.connection.SetState(types.StateConnected)
 				}
@@ -232,6 +231,8 @@ func (c *WebSocketClient) connectionLoop(ctx context.Context) {
 					continue
 				}
 			}
+		} else {
+			c.logger.Warn("WebSocket connection attempt failed", "error", err)
 		}
 
 		// Connection failed, wait before retry

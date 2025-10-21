@@ -120,12 +120,19 @@ func (cm *CertificateManager) LoadCACertificate() (*x509.CertPool, error) {
 		return nil, fmt.Errorf("failed to read CA certificate: %w", err)
 	}
 
-	caCertPool := x509.NewCertPool()
+	// Start with system cert pool to trust public CAs (e.g., Let's Encrypt, Google Trust Services)
+	caCertPool, err := x509.SystemCertPool()
+	if err != nil {
+		cm.logger.Warn("Failed to load system cert pool, using empty pool", "error", err)
+		caCertPool = x509.NewCertPool()
+	}
+	
+	// Add enrollment CA on top
 	if !caCertPool.AppendCertsFromPEM(caCertPEM) {
 		return nil, fmt.Errorf("failed to parse CA certificate")
 	}
 
-	cm.logger.Debug("Successfully loaded CA certificate")
+	cm.logger.Debug("Successfully loaded CA certificate (system + enrollment CA)")
 	return caCertPool, nil
 }
 
