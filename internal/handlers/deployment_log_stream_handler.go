@@ -12,9 +12,9 @@ import (
 	"sync"
 	"time"
 
-	"pulseup-agent-go/internal/shared/logpaths"
-	"pulseup-agent-go/pkg/logger"
-	"pulseup-agent-go/pkg/types"
+	"outlap-agent-go/internal/shared/logpaths"
+	"outlap-agent-go/pkg/logger"
+	"outlap-agent-go/pkg/types"
 )
 
 const (

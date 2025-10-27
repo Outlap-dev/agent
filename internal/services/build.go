@@ -16,9 +16,9 @@ import (
 	"github.com/docker/docker/api/types/mount"
 	"github.com/docker/go-connections/nat"
 
-	wscontracts "pulseup-agent-go/pkg/contracts/websocket"
-	"pulseup-agent-go/pkg/logger"
-	"pulseup-agent-go/pkg/types"
+	wscontracts "outlap-agent-go/pkg/contracts/websocket"
+	"outlap-agent-go/pkg/logger"
+	"outlap-agent-go/pkg/types"
 )
 
 // BuildServiceImpl implements the BuildService interface
@@ -35,7 +35,7 @@ const buildHistoryLimit = 10
 
 // NewBuildService creates a new build service
 func NewBuildService(logger *logger.Logger, dockerService DockerService) *BuildServiceImpl {
-	deploymentDir := "/opt/pulseup/deployments"
+	deploymentDir := "/opt/outlap/deployments"
 
 	// Check if we're in debug mode
 	if os.Getenv("DEBUG") == "true" {
@@ -496,7 +496,7 @@ func (b *BuildServiceImpl) GetBuildCommandInfo(ctx context.Context, serviceUID s
 
 	buildType := planInfo.Type
 	contextPath := planInfo.ContextPath
-	imageName := fmt.Sprintf("pulseup-app:%s", serviceUID)
+	imageName := fmt.Sprintf("outlap-app:%s", serviceUID)
 	var command string
 
 	switch buildType {

@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	"pulseup-agent-go/pkg/logger"
+	"outlap-agent-go/pkg/logger"
 
 	"github.com/gorilla/websocket"
 )

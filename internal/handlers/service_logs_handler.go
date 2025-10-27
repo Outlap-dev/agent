@@ -7,8 +7,8 @@ import (
 	"sync"
 	"time"
 
-	"pulseup-agent-go/pkg/logger"
-	"pulseup-agent-go/pkg/types"
+	"outlap-agent-go/pkg/logger"
+	"outlap-agent-go/pkg/types"
 )
 
 // ServiceLogsHandler handles all service log operations (fetch, stream start, stream stop).
@@ -212,7 +212,7 @@ func (h *ServiceLogsHandler) streamLogs(ctx context.Context, serviceUID string) 
 	}()
 
 	// Generate container name for application using service UID
-	containerName := fmt.Sprintf("pulseup-app-%s", serviceUID)
+	containerName := fmt.Sprintf("outlap-app-%s", serviceUID)
 
 	// Get the log stream from Docker service
 	logChan, err := h.services.GetDockerService().StreamContainerLogs(ctx, containerName)

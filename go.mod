@@ -1,4 +1,4 @@
-module pulseup-agent-go
+module outlap-agent-go
 
 go 1.23.0
 

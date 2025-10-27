@@ -1,6 +1,6 @@
 package services
 
-import "pulseup-agent-go/internal/shared/logpaths"
+import "outlap-agent-go/internal/shared/logpaths"
 
 // ResolveDeploymentLogsDir exposes the shared deployment logs directory helper for
 // existing service consumers while allowing other packages to import the logic without

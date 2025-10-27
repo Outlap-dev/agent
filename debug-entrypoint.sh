@@ -2,7 +2,7 @@
 
 # Check if Docker socket is mounted (indicating we should use host Docker)
 ensure_caddy_permissions() {
-    local caddy_root="/etc/pulseup-agent/caddy"
+    local caddy_root="/etc/outlap-agent/caddy"
     local caddy_dirs=("$caddy_root" "$caddy_root/config" "$caddy_root/data" "$caddy_root/logs")
     local additional_dirs=("/var/lib/caddy" "/var/log/caddy")
 
@@ -12,8 +12,8 @@ ensure_caddy_permissions() {
         fi
     done
 
-    # Set ownership so the pulseup agent process can manage domain state files
-    if ! chown -R pulseup:pulseup "$caddy_root" /var/lib/caddy /var/log/caddy 2>/dev/null; then
+    # Set ownership so the outlap agent process can manage domain state files
+    if ! chown -R outlap:outlap "$caddy_root" /var/lib/caddy /var/log/caddy 2>/dev/null; then
         echo "Warning: failed to adjust ownership for Caddy directories"
     fi
 
@@ -37,11 +37,11 @@ if [ -S "$SOCKET_PATH" ]; then
         SOCK_GID=$(stat -c '%g' "$SOCKET_PATH")
         SOCK_GROUP_NAME=$(getent group "$SOCK_GID" | cut -d: -f1)
         if [ -z "$SOCK_GROUP_NAME" ]; then
-            SOCK_GROUP_NAME="pulseup-docker-$SOCK_GID"
+            SOCK_GROUP_NAME="outlap-docker-$SOCK_GID"
             groupadd -g "$SOCK_GID" "$SOCK_GROUP_NAME" 2>/dev/null || true
         fi
         if [ -n "$SOCK_GROUP_NAME" ]; then
-            usermod -aG "$SOCK_GROUP_NAME" pulseup 2>/dev/null || true
+            usermod -aG "$SOCK_GROUP_NAME" outlap 2>/dev/null || true
             usermod -aG "$SOCK_GROUP_NAME" root 2>/dev/null || true
         fi
         if [ -n "$SOCK_GROUP_NAME" ]; then
@@ -54,12 +54,12 @@ if [ -S "$SOCKET_PATH" ]; then
     if ! docker info >/dev/null 2>&1; then
         DOCKER_INFO_OUTPUT=$(docker info 2>&1 || true)
         if echo "$DOCKER_INFO_OUTPUT" | grep -qi "permission denied"; then
-            echo "Permission denied when accessing Docker socket as root. Retrying as pulseup user..."
-            if sudo -E -H -u pulseup docker info >/dev/null 2>&1; then
-                echo "Docker daemon accessible as pulseup user"
+            echo "Permission denied when accessing Docker socket as root. Retrying as outlap user..."
+            if sudo -E -H -u outlap docker info >/dev/null 2>&1; then
+                echo "Docker daemon accessible as outlap user"
             else
                 echo "Docker socket mounted but inaccessible – starting internal Docker daemon fallback"
-                export DOCKERD_HOST="unix:///var/run/pulseup-dind.sock"
+                export DOCKERD_HOST="unix:///var/run/outlap-dind.sock"
                 export DOCKER_HOST="$DOCKERD_HOST"
                 /usr/local/bin/dind-entrypoint.sh &
                 while ! docker info >/dev/null 2>&1; do
@@ -106,17 +106,17 @@ shutdown() {
 trap shutdown SIGTERM SIGINT
 
 # Check if debug mode is enabled
-export HOME=/home/pulseup
+export HOME=/home/outlap
 
 if [ "$ENABLE_DEBUG" = "true" ]; then
-    echo "Starting pulseup-agent with debugger on port 2346..."
-    sudo -E -H -u pulseup \
-        /app/dlv --listen=:2346 --headless=true --api-version=2 --accept-multiclient exec /app/pulseup-agent &
+    echo "Starting outlap-agent with debugger on port 2346..."
+    sudo -E -H -u outlap \
+        /app/dlv --listen=:2346 --headless=true --api-version=2 --accept-multiclient exec /app/outlap-agent &
     AGENT_PID=$!
     echo "Debugger listening on :2346"
 else
-    echo "Starting pulseup-agent..."
-    sudo -E -H -u pulseup /app/pulseup-agent &
+    echo "Starting outlap-agent..."
+    sudo -E -H -u outlap /app/outlap-agent &
     AGENT_PID=$!
 fi
 

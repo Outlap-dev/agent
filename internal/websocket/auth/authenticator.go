@@ -6,10 +6,10 @@ import (
 	"fmt"
 	"time"
 
-	"pulseup-agent-go/internal/config"
-	"pulseup-agent-go/internal/websocket/retry"
-	"pulseup-agent-go/internal/websocket/types"
-	"pulseup-agent-go/pkg/logger"
+	"outlap-agent-go/internal/config"
+	"outlap-agent-go/internal/websocket/retry"
+	"outlap-agent-go/internal/websocket/types"
+	"outlap-agent-go/pkg/logger"
 )
 
 // Authenticator handles WebSocket authentication

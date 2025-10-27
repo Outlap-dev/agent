@@ -1,7 +1,7 @@
 version: '3.8'
 
 services:
-  pulseup-agent-debug:
+  outlap-agent-debug:
     build:
       context: .
       dockerfile: Dockerfile
@@ -10,29 +10,29 @@ services:
         BUILD_DATE: ${BUILD_DATE:-}
         GIT_COMMIT: ${GIT_COMMIT:-unknown}
         ENABLE_DEBUG: "true"
-    container_name: pulseup-agent-debug
+    container_name: outlap-agent-debug
     restart: "no"
     environment:
       - ENABLE_DEBUG=true
       - WEBSOCKET_URL=${WEBSOCKET_URL:-ws://host.docker.internal:3000/ws/agent_v2}
       - JOIN_TOKEN=${JOIN_TOKEN:-test-token}
-      - CERT_DIR=/var/lib/pulseup/certs
+      - CERT_DIR=/var/lib/outlap/certs
       - LOG_LEVEL=${LOG_LEVEL:-DEBUG}
       - LOG_FORMAT=text
       - CONFIG_PATH=${CONFIG_PATH:-}
-      - PULSEUP_CADDY_HOST_PATH=/etc/pulseup-agent/caddy
+      - PULSEUP_CADDY_HOST_PATH=/etc/outlap-agent/caddy
       - DOCKER_SOCKET_PATH=${DOCKER_SOCKET_PATH:-/var/run/docker.sock}
     volumes:
       - ${DOCKER_SOCKET_PATH:-/var/run/docker.sock}:${DOCKER_SOCKET_PATH:-/var/run/docker.sock}
-      - ./certs:/var/lib/pulseup/certs
-      - caddy_data:/etc/pulseup-agent/caddy
+      - ./certs:/var/lib/outlap/certs
+      - caddy_data:/etc/outlap-agent/caddy
     extra_hosts:
       - "host.docker.internal:host-gateway"
     privileged: true
     ports:
       - "2346:2346"  # Agent debugger
     networks:
-      - pulseup-network
+      - outlap-network
     depends_on:
       - caddy
 
@@ -47,12 +47,12 @@ services:
       - caddy_config:/etc/caddy
       - caddy_data:/data
     networks:
-      - pulseup-network
+      - outlap-network
 
 volumes:
   caddy_config:
   caddy_data:
 
 networks:
-  pulseup-network:
+  outlap-network:
     driver: bridge

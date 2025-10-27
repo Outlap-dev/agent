@@ -18,8 +18,8 @@ import (
 	"github.com/shirou/gopsutil/v3/mem"
 	"github.com/shirou/gopsutil/v3/net"
 
-	"pulseup-agent-go/pkg/logger"
-	"pulseup-agent-go/pkg/types"
+	"outlap-agent-go/pkg/logger"
+	"outlap-agent-go/pkg/types"
 )
 
 // SystemServiceImpl implements the SystemService interface

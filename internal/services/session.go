@@ -4,9 +4,9 @@ import (
 	"context"
 	"sync"
 
-	"pulseup-agent-go/internal/config"
-	"pulseup-agent-go/pkg/logger"
-	"pulseup-agent-go/pkg/types"
+	"outlap-agent-go/internal/config"
+	"outlap-agent-go/pkg/logger"
+	"outlap-agent-go/pkg/types"
 )
 
 type AgentSession struct {
@@ -19,6 +19,7 @@ type AgentSession struct {
 	autoUpdatesEnabled bool
 	updateLoopActive   bool
 	latestKnownVersion string
+	serverUID          string
 }
 
 func NewAgentSession(cfg *config.Config, updateService UpdateService, baseLogger *logger.Logger) *AgentSession {
@@ -132,4 +133,24 @@ func (s *AgentSession) stopUpdateLoop() {
 	s.mu.Unlock()
 
 	s.logger.Debug("Auto-update loop stopped")
+}
+
+// SetServerUID stores the server UID after authentication
+func (s *AgentSession) SetServerUID(serverUID string) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	s.serverUID = serverUID
+	s.mu.Unlock()
+}
+
+// GetServerUID returns the authenticated server UID
+func (s *AgentSession) GetServerUID() string {
+	if s == nil {
+		return ""
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.serverUID
 }

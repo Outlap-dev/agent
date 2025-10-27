@@ -9,8 +9,8 @@ import (
 	"strconv"
 	"strings"
 
-	"pulseup-agent-go/pkg/logger"
-	"pulseup-agent-go/pkg/types"
+	"outlap-agent-go/pkg/logger"
+	"outlap-agent-go/pkg/types"
 )
 
 // DockerfileServiceImpl handles Dockerfile-based deployments
@@ -133,7 +133,7 @@ func (d *DockerfileServiceImpl) Deploy(ctx context.Context, deploymentUID, sourc
 	appendStepLog(deploymentStepInitialize, "INFO", "Starting Dockerfile deployment")
 	updateStatus(types.DeploymentStatusInProgress, "Starting Dockerfile deployment", deploymentStepInitialize)
 
-	imageName := fmt.Sprintf("pulseup-app:%s", serviceUID)
+	imageName := fmt.Sprintf("outlap-app:%s", serviceUID)
 	if d.containerBase != nil {
 		imageName = d.containerBase.imageNameForService(serviceUID)
 	}

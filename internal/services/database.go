@@ -18,21 +18,21 @@ import (
 	"github.com/google/uuid"
 	"github.com/robfig/cron/v3"
 
-	"pulseup-agent-go/pkg/logger"
-	"pulseup-agent-go/pkg/types"
+	"outlap-agent-go/pkg/logger"
+	"outlap-agent-go/pkg/types"
 )
 
 var automationCronParser = cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow | cron.Descriptor)
 
 const (
-	databaseTypeLabelKey = "pulseup.database_type"
+	databaseTypeLabelKey = "outlap.database_type"
 )
 
 func getBackupBaseDir() string {
 	if override := os.Getenv("PULSEUP_BACKUP_DIR"); override != "" {
 		return override
 	}
-	return "/var/lib/pulseup/backups"
+	return "/var/lib/outlap/backups"
 }
 
 // DatabasePortInUseError is raised when attempting to use a port that is already in use
@@ -280,8 +280,26 @@ func (d *DatabaseServiceImpl) DeployDatabase(ctx context.Context, dbType, passwo
 		deploymentUID = fmt.Sprintf("dep_%d", time.Now().UnixNano())
 	}
 
+	// Check if container already exists and remove it (for redeployment)
+	containerName := fmt.Sprintf("outlap-db-%s", name)
+
+	// Always attempt to remove the container, even if ContainerExists fails or returns false
+	// This handles edge cases where the container exists but wasn't detected
+	d.logger.Debug("Attempting to remove any existing container", "container", containerName)
+	if err := d.dockerService.RemoveContainerByName(ctx, containerName); err != nil {
+		// Only log as debug if container doesn't exist, error otherwise
+		if strings.Contains(err.Error(), "No such container") || strings.Contains(err.Error(), "not found") {
+			d.logger.Debug("No existing container to remove", "container", containerName)
+		} else {
+			d.logger.Error("Failed to remove existing container", "container", containerName, "error", err)
+			return nil, fmt.Errorf("failed to remove existing container %s: %w", containerName, err)
+		}
+	} else {
+		d.logger.Info("Successfully removed existing container for redeployment", "container", containerName)
+	}
+
 	// Create Docker volume for persistence
-	volumeName := fmt.Sprintf("pulseup-db-vol-%s", name)
+	volumeName := fmt.Sprintf("outlap-db-vol-%s", name)
 	if err := d.createDockerVolume(ctx, volumeName); err != nil {
 		return nil, fmt.Errorf("failed to create Docker volume: %w", err)
 	}
@@ -351,10 +369,10 @@ func (d *DatabaseServiceImpl) DeployDatabase(ctx context.Context, dbType, passwo
 		Env:          environment,
 		ExposedPorts: exposedPorts,
 		Labels: map[string]string{
-			"pulseup.service_uid":    name,
-			"pulseup.deployment_uid": deploymentUID,
-			"pulseup.managed":        "true",
-			databaseTypeLabelKey:     dbType,
+			"outlap.service_uid":    name,
+			"outlap.deployment_uid": deploymentUID,
+			"outlap.managed":        "true",
+			databaseTypeLabelKey:    dbType,
 		},
 	}
 
@@ -386,10 +404,7 @@ func (d *DatabaseServiceImpl) DeployDatabase(ctx context.Context, dbType, passwo
 		},
 	}
 
-	// Create container name
-	containerName := fmt.Sprintf("pulseup-db-%s", name)
-
-	// Create and start container
+	// Create and start container (containerName already defined above)
 	containerID, err := d.dockerService.CreateContainer(ctx, containerConfig, hostConfig, containerName)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create database container: %w", err)
@@ -429,7 +444,7 @@ func (d *DatabaseServiceImpl) CreateDatabase(ctx context.Context, dbType, name s
 func (d *DatabaseServiceImpl) DeleteDatabase(ctx context.Context, name string) error {
 	d.logger.Info("Deleting database", "name", name)
 
-	containerName := fmt.Sprintf("pulseup-db-%s", name)
+	containerName := fmt.Sprintf("outlap-db-%s", name)
 
 	// Remove the container
 	if err := d.dockerService.RemoveContainer(ctx, containerName); err != nil {
@@ -451,7 +466,7 @@ func (d *DatabaseServiceImpl) BackupDatabase(ctx context.Context, name string) (
 	d.emitProgress(ctx, 5, "Preparing backup", 0, 0, 0)
 
 	// Get container information
-	containerName := fmt.Sprintf("pulseup-db-%s", name)
+	containerName := fmt.Sprintf("outlap-db-%s", name)
 
 	// Check if container exists and is running
 	containers, err := d.dockerService.ListContainers(ctx)
@@ -596,7 +611,7 @@ func (d *DatabaseServiceImpl) RestoreDatabase(ctx context.Context, name, backupP
 	}
 
 	// Get container information
-	containerName := fmt.Sprintf("pulseup-db-%s", name)
+	containerName := fmt.Sprintf("outlap-db-%s", name)
 	containers, err := d.dockerService.ListContainers(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to list containers: %w", err)
@@ -690,7 +705,7 @@ func (d *DatabaseServiceImpl) RestoreDatabase(ctx context.Context, name, backupP
 func (d *DatabaseServiceImpl) GetDatabaseStatus(ctx context.Context, name string) (types.ServiceStatus, error) {
 	d.logger.Debug("Getting database status", "name", name)
 
-	containerName := fmt.Sprintf("pulseup-db-%s", name)
+	containerName := fmt.Sprintf("outlap-db-%s", name)
 	return d.dockerService.GetContainerStatus(ctx, containerName)
 }
 
@@ -709,8 +724,8 @@ func (d *DatabaseServiceImpl) createDockerVolume(ctx context.Context, volumeName
 
 	// Create the volume
 	labels := map[string]string{
-		"pulseup.component": "database",
-		"pulseup.type":      "data",
+		"outlap.component": "database",
+		"outlap.type":      "data",
 	}
 
 	if err := d.dockerService.CreateVolume(ctx, volumeName, labels); err != nil {
@@ -929,8 +944,8 @@ func (d *DatabaseServiceImpl) VerifyBackupStoragePath(ctx context.Context, servi
 		}, nil
 	}
 
-	testFile := filepath.Join(normalized, fmt.Sprintf(".pulseup-storage-test-%d", time.Now().UnixNano()))
-	if err := os.WriteFile(testFile, []byte("pulseup"), 0o644); err != nil {
+	testFile := filepath.Join(normalized, fmt.Sprintf(".outlap-storage-test-%d", time.Now().UnixNano()))
+	if err := os.WriteFile(testFile, []byte("outlap"), 0o644); err != nil {
 		return &types.BackupStorageVerificationResult{
 			Success: false,
 			Message: fmt.Sprintf("failed to write test file: %v", err),

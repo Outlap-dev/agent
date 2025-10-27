@@ -13,9 +13,9 @@ import (
 	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/transport/http"
 
-	wscontracts "pulseup-agent-go/pkg/contracts/websocket"
-	"pulseup-agent-go/pkg/logger"
-	"pulseup-agent-go/pkg/types"
+	wscontracts "outlap-agent-go/pkg/contracts/websocket"
+	"outlap-agent-go/pkg/logger"
+	"outlap-agent-go/pkg/types"
 )
 
 // GitServiceImpl implements the GitService interface
@@ -27,7 +27,7 @@ type GitServiceImpl struct {
 
 // NewGitService creates a new Git service
 func NewGitService(logger *logger.Logger) *GitServiceImpl {
-	baseCloneDir := "/opt/pulseup/apps"
+	baseCloneDir := "/opt/outlap/apps"
 
 	// Check if we're in debug mode
 	if os.Getenv("DEBUG") == "true" {

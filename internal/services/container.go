@@ -6,18 +6,18 @@ import (
 	"fmt"
 	"time"
 
-	"pulseup-agent-go/internal/bootstrap"
-	"pulseup-agent-go/internal/config"
-	"pulseup-agent-go/internal/enrollment"
-	enrollmentbootstrap "pulseup-agent-go/internal/enrollment/bootstrap"
-	"pulseup-agent-go/internal/handlers"
-	"pulseup-agent-go/internal/handlers/routes"
-	"pulseup-agent-go/internal/security"
-	"pulseup-agent-go/internal/websocket"
-	wsbootstrap "pulseup-agent-go/internal/websocket/bootstrap"
-	wsclient "pulseup-agent-go/internal/websocket/client"
-	"pulseup-agent-go/pkg/logger"
-	"pulseup-agent-go/pkg/types"
+	"outlap-agent-go/internal/bootstrap"
+	"outlap-agent-go/internal/config"
+	"outlap-agent-go/internal/enrollment"
+	enrollmentbootstrap "outlap-agent-go/internal/enrollment/bootstrap"
+	"outlap-agent-go/internal/handlers"
+	"outlap-agent-go/internal/handlers/routes"
+	"outlap-agent-go/internal/security"
+	"outlap-agent-go/internal/websocket"
+	wsbootstrap "outlap-agent-go/internal/websocket/bootstrap"
+	wsclient "outlap-agent-go/internal/websocket/client"
+	"outlap-agent-go/pkg/logger"
+	"outlap-agent-go/pkg/types"
 )
 
 // ServiceContainer manages all services and their dependencies
@@ -123,7 +123,15 @@ func (c *ServiceContainer) Initialize(ctx context.Context) error {
 	// Prepare hardware reporter to publish inventory details on initial connection
 	c.hardwareReporter = NewHardwareReporter(c.baseLogger, c.systemService, c.wsAdapter)
 	if c.mtlsClient != nil {
-		c.mtlsClient.RegisterOnConnected(func(connCtx context.Context, _ *wsclient.WebSocketClient) error {
+		c.mtlsClient.RegisterOnConnected(func(connCtx context.Context, client *wsclient.WebSocketClient) error {
+			// Store server UID in session after successful authentication
+			if c.sessionManager != nil && client != nil {
+				if authResult := client.GetAuthResult(); authResult != nil && authResult.ServerUID != "" {
+					c.sessionManager.SetServerUID(authResult.ServerUID)
+					c.logger.Debug("Stored server UID in session", "server_uid", authResult.ServerUID)
+				}
+			}
+
 			if c.hardwareReporter == nil {
 				return nil
 			}
@@ -184,13 +192,13 @@ func (c *ServiceContainer) Start(ctx context.Context) error {
 	}
 
 	c.logger.Info("Starting WebSocket client with mTLS", "url", c.config.WebSocketURL)
-	
+
 	if err := c.mtlsClient.StartWithAutoRenewal(ctx); err != nil {
 		return fmt.Errorf("failed to establish mTLS websocket connection: %w", err)
 	}
 
 	c.logger.Info("Waiting for WebSocket connection to establish...")
-	
+
 	// Wait for initial connection to be established, continuing to retry until success or context cancellation
 	warningInterval := 30 * time.Second
 	waitTicker := time.NewTicker(100 * time.Millisecond)
@@ -201,7 +209,7 @@ func (c *ServiceContainer) Start(ctx context.Context) error {
 
 	for {
 		if c.mtlsClient.IsConnected() {
-			c.logger.Info("WebSocket connection established", 
+			c.logger.Info("WebSocket connection established",
 				"elapsed", time.Since(firstAttempt).Round(time.Second))
 			break
 		}
@@ -211,7 +219,7 @@ func (c *ServiceContainer) Start(ctx context.Context) error {
 			return fmt.Errorf("context cancelled while waiting for connection")
 		case <-waitTicker.C:
 			if time.Since(lastWarning) >= warningInterval {
-				c.logger.Warn("Still waiting for WebSocket connection", 
+				c.logger.Warn("Still waiting for WebSocket connection",
 					"elapsed", time.Since(firstAttempt).Round(time.Second))
 				lastWarning = time.Now()
 			}

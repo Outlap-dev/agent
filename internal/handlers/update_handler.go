@@ -4,9 +4,9 @@ import (
 	"context"
 	"encoding/json"
 
-	"pulseup-agent-go/internal/update"
-	"pulseup-agent-go/pkg/logger"
-	"pulseup-agent-go/pkg/types"
+	"outlap-agent-go/internal/update"
+	"outlap-agent-go/pkg/logger"
+	"outlap-agent-go/pkg/types"
 )
 
 // UpdateHandler aggregates agent update commands (check/apply).

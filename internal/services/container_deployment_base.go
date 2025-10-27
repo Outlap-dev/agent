@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 
-	"pulseup-agent-go/pkg/logger"
-	"pulseup-agent-go/pkg/types"
+	"outlap-agent-go/pkg/logger"
+	"outlap-agent-go/pkg/types"
 )
 
 // containerDeploymentBase provides shared helpers for deployment strategies that
@@ -33,9 +33,9 @@ func newContainerDeploymentBase(baseLogger *logger.Logger, deploymentService Dep
 
 func (b *containerDeploymentBase) imageNameForService(serviceUID string) string {
 	if serviceUID == "" {
-		return "pulseup-app"
+		return "outlap-app"
 	}
-	return fmt.Sprintf("pulseup-app:%s", serviceUID)
+	return fmt.Sprintf("outlap-app:%s", serviceUID)
 }
 
 func (b *containerDeploymentBase) deployBuiltImage(

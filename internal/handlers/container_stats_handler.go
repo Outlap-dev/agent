@@ -5,8 +5,8 @@ import (
 	"encoding/json"
 	"strings"
 
-	"pulseup-agent-go/pkg/logger"
-	"pulseup-agent-go/pkg/types"
+	"outlap-agent-go/pkg/logger"
+	"outlap-agent-go/pkg/types"
 )
 
 // ContainerStatsHandler handles requests to retrieve live statistics for a specific container.

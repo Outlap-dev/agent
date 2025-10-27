@@ -13,8 +13,8 @@ import (
 	"strings"
 	"time"
 
-	"pulseup-agent-go/pkg/logger"
-	"pulseup-agent-go/pkg/types"
+	"outlap-agent-go/pkg/logger"
+	"outlap-agent-go/pkg/types"
 )
 
 const (
@@ -59,7 +59,7 @@ func (n *NixpacksServiceImpl) BuildImage(ctx context.Context, sourcePath, servic
 	}
 
 	workDir := cleanSourcePath(sourcePath)
-	imageName := fmt.Sprintf("pulseup-app:%s", serviceUID)
+	imageName := fmt.Sprintf("outlap-app:%s", serviceUID)
 	if n.containerBase != nil {
 		imageName = n.containerBase.imageNameForService(serviceUID)
 	}
@@ -173,7 +173,7 @@ func (n *NixpacksServiceImpl) Deploy(ctx context.Context, deploymentUID, sourceP
 		}
 	}
 
-	imageName := fmt.Sprintf("pulseup-app:%s", serviceUID)
+	imageName := fmt.Sprintf("outlap-app:%s", serviceUID)
 	if n.containerBase != nil {
 		imageName = n.containerBase.imageNameForService(serviceUID)
 	}

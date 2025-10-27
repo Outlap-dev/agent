@@ -14,9 +14,9 @@ import (
 	"github.com/docker/docker/client"
 	"github.com/google/uuid"
 
-	wscontracts "pulseup-agent-go/pkg/contracts/websocket"
-	"pulseup-agent-go/pkg/logger"
-	pulseuptypes "pulseup-agent-go/pkg/types"
+	wscontracts "outlap-agent-go/pkg/contracts/websocket"
+	"outlap-agent-go/pkg/logger"
+	pulseuptypes "outlap-agent-go/pkg/types"
 )
 
 // MonitoringServiceImpl implements the MonitoringService interface

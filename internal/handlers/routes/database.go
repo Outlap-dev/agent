@@ -4,8 +4,8 @@ import (
 	"os"
 	"strings"
 
-	"pulseup-agent-go/internal/handlers"
-	"pulseup-agent-go/pkg/logger"
+	"outlap-agent-go/internal/handlers"
+	"outlap-agent-go/pkg/logger"
 )
 
 // DatabaseRouteConfig allows callers to customize database route registration.

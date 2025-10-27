@@ -9,11 +9,11 @@ import (
 	"encoding/json"
 	"time"
 
-	"pulseup-agent-go/internal/config"
-	"pulseup-agent-go/internal/websocket/client"
-	"pulseup-agent-go/internal/websocket/types"
-	"pulseup-agent-go/pkg/logger"
-	pkgTypes "pulseup-agent-go/pkg/types"
+	"outlap-agent-go/internal/config"
+	"outlap-agent-go/internal/websocket/client"
+	"outlap-agent-go/internal/websocket/types"
+	"outlap-agent-go/pkg/logger"
+	pkgTypes "outlap-agent-go/pkg/types"
 )
 
 // Manager provides a high-level interface to the modular WebSocket client

@@ -6,11 +6,11 @@ import (
 	"fmt"
 	"strings"
 
-	"pulseup-agent-go/pkg/logger"
-	"pulseup-agent-go/pkg/types"
+	"outlap-agent-go/pkg/logger"
+	"outlap-agent-go/pkg/types"
 )
 
-const serviceUIDLabelKey = "pulseup.service_uid"
+const serviceUIDLabelKey = "outlap.service_uid"
 
 // serviceControlRequest represents the shared request payload for service lifecycle commands.
 type serviceControlRequest struct {
@@ -300,8 +300,8 @@ func (h *ServiceLifecycleHandler) Delete(ctx context.Context, data json.RawMessa
 	}
 
 	// Include legacy and database container names as fallbacks
-	containerSet[fmt.Sprintf("pulseup-app-%s", request.ServiceUID)] = struct{}{}
-	containerSet[fmt.Sprintf("pulseup-db-%s", request.ServiceUID)] = struct{}{}
+	containerSet[fmt.Sprintf("outlap-app-%s", request.ServiceUID)] = struct{}{}
+	containerSet[fmt.Sprintf("outlap-db-%s", request.ServiceUID)] = struct{}{}
 
 	// Delete containers
 	for containerName := range containerSet {

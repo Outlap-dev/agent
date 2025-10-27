@@ -3,8 +3,8 @@ package services
 import (
 	"context"
 
-	wscontracts "pulseup-agent-go/pkg/contracts/websocket"
-	"pulseup-agent-go/pkg/types"
+	wscontracts "outlap-agent-go/pkg/contracts/websocket"
+	"outlap-agent-go/pkg/types"
 
 	dockertypes "github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"

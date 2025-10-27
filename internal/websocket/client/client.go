@@ -7,12 +7,12 @@ import (
 	"sync"
 	"time"
 
-	"pulseup-agent-go/internal/config"
-	"pulseup-agent-go/internal/websocket/auth"
-	"pulseup-agent-go/internal/websocket/message"
-	"pulseup-agent-go/internal/websocket/retry"
-	"pulseup-agent-go/internal/websocket/types"
-	"pulseup-agent-go/pkg/logger"
+	"outlap-agent-go/internal/config"
+	"outlap-agent-go/internal/websocket/auth"
+	"outlap-agent-go/internal/websocket/message"
+	"outlap-agent-go/internal/websocket/retry"
+	"outlap-agent-go/internal/websocket/types"
+	"outlap-agent-go/pkg/logger"
 )
 
 // WebSocketClient is a modular WebSocket client with clean separation of concerns
@@ -26,6 +26,10 @@ type WebSocketClient struct {
 	processor           *message.Processor
 	retryManager        *retry.RetryManager
 	onConnectedHandlers []func(context.Context, *WebSocketClient) error
+
+	// Authentication result
+	authResultMu sync.RWMutex
+	authResult   *types.AuthResult
 
 	// Lifecycle management
 	ctx       context.Context
@@ -293,6 +297,10 @@ func (c *WebSocketClient) authenticate(ctx context.Context) error {
 
 	if result.Success {
 		c.connection.SetState(types.StateConnected)
+		// Store auth result
+		c.authResultMu.Lock()
+		c.authResult = result
+		c.authResultMu.Unlock()
 		return nil
 	}
 
@@ -531,4 +539,11 @@ func (c *WebSocketClient) runOnConnectedHandlers(ctx context.Context) {
 // GetConnectionStateString returns connection state as string (compatibility)
 func (c *WebSocketClient) GetConnectionStateString() string {
 	return c.connection.GetState().String()
+}
+
+// GetAuthResult returns the authentication result from the last successful auth
+func (c *WebSocketClient) GetAuthResult() *types.AuthResult {
+	c.authResultMu.RLock()
+	defer c.authResultMu.RUnlock()
+	return c.authResult
 }

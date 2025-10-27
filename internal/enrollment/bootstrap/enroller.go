@@ -3,9 +3,9 @@ package bootstrap
 import (
 	"time"
 
-	"pulseup-agent-go/internal/config"
-	"pulseup-agent-go/internal/enrollment"
-	"pulseup-agent-go/pkg/logger"
+	"outlap-agent-go/internal/config"
+	"outlap-agent-go/internal/enrollment"
+	"outlap-agent-go/pkg/logger"
 )
 
 // NewEnroller constructs an enrollment.Enroller when join-token based enrollment is requested.

@@ -6,9 +6,9 @@ import (
 	"strings"
 	"time"
 
-	"pulseup-agent-go/pkg/logger"
-	"pulseup-agent-go/pkg/runtime"
-	"pulseup-agent-go/pkg/types"
+	"outlap-agent-go/pkg/logger"
+	"outlap-agent-go/pkg/runtime"
+	"outlap-agent-go/pkg/types"
 )
 
 type commandService struct {
@@ -152,7 +152,7 @@ func (cs *commandService) initializeWhitelistedCommands() {
 		"agent.update": {
 			ID:                   "agent.update",
 			Name:                 "Update Agent",
-			Description:          "Update the PulseUp agent to the latest version",
+			Description:          "Update the Outlap agent to the latest version",
 			Category:             "agent",
 			RequiresConfirmation: true,
 			Handler: func(ctx context.Context, args map[string]string) (*types.CommandResult, error) {
@@ -166,7 +166,7 @@ func (cs *commandService) initializeWhitelistedCommands() {
 		"agent.restart": {
 			ID:          "agent.restart",
 			Name:        "Restart Agent",
-			Description: "Restart the PulseUp agent",
+			Description: "Restart the Outlap agent",
 			Category:    "agent",
 			Handler: func(ctx context.Context, args map[string]string) (*types.CommandResult, error) {
 				return cs.restartAgent(ctx)
@@ -335,7 +335,7 @@ func (cs *commandService) restartAgent(ctx context.Context) (*types.CommandResul
 	// Try systemctl first
 	systemctlResult := cs.executor.Execute(ctx, "systemctl", []string{"--version"}, nil)
 	if systemctlResult.Error == nil {
-		result := cs.executor.Execute(ctx, "sudo", []string{"systemctl", "restart", "pulseup-agent"}, nil)
+		result := cs.executor.Execute(ctx, "sudo", []string{"systemctl", "restart", "outlap-agent"}, nil)
 		attempts = append(attempts, fmt.Sprintf("systemctl attempt: %s", result.Stdout+result.Stderr))
 
 		if result.Error == nil {
@@ -359,7 +359,7 @@ func (cs *commandService) restartAgent(ctx context.Context) (*types.CommandResul
 	}
 
 	// Try Docker container restart if running in Docker
-	dockerResult := cs.executor.Execute(ctx, "docker", []string{"restart", "pulseup-agent"}, nil)
+	dockerResult := cs.executor.Execute(ctx, "docker", []string{"restart", "outlap-agent"}, nil)
 	if dockerResult.Error == nil {
 		return &types.CommandResult{
 			Success:   true,
@@ -370,7 +370,7 @@ func (cs *commandService) restartAgent(ctx context.Context) (*types.CommandResul
 	attempts = append(attempts, fmt.Sprintf("docker restart failed: %s", dockerResult.Stdout+dockerResult.Stderr))
 
 	// Fall back to pkill and rely on supervisor/systemd/docker to restart
-	pkillResult := cs.executor.Execute(ctx, "pkill", []string{"-f", "pulseup-agent"}, nil)
+	pkillResult := cs.executor.Execute(ctx, "pkill", []string{"-f", "outlap-agent"}, nil)
 	attempts = append(attempts, fmt.Sprintf("pkill attempt: %s", pkillResult.Stdout+pkillResult.Stderr))
 
 	if pkillResult.Error == nil {

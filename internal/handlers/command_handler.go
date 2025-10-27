@@ -5,8 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"pulseup-agent-go/pkg/logger"
-	"pulseup-agent-go/pkg/types"
+	"outlap-agent-go/pkg/logger"
+	"outlap-agent-go/pkg/types"
 )
 
 // CommandHandler aggregates list and execution of whitelisted commands.

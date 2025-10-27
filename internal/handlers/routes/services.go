@@ -1,8 +1,8 @@
 package routes
 
 import (
-	"pulseup-agent-go/internal/handlers"
-	"pulseup-agent-go/pkg/logger"
+	"outlap-agent-go/internal/handlers"
+	"outlap-agent-go/pkg/logger"
 )
 
 // RegisterServiceRoutes registers all service-related command handlers.

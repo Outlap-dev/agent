@@ -3,7 +3,7 @@ package websocket
 import (
 	"encoding/json"
 
-	"pulseup-agent-go/pkg/types"
+	"outlap-agent-go/pkg/types"
 )
 
 // Emitter represents the ability to emit events over the websocket connection.

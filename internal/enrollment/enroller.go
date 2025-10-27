@@ -2,40 +2,40 @@
 package enrollment
 
 import (
-    "context"
-    "bytes"
-    "encoding/json"
-    "fmt"
-    "io"
-    "net/http"
-    "time"
+	"bytes"
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"time"
 
-    "pulseup-agent-go/internal/security"
-    "pulseup-agent-go/pkg/logger"
-    "pulseup-agent-go/pkg/types"
+	"outlap-agent-go/internal/security"
+	"outlap-agent-go/pkg/logger"
+	"outlap-agent-go/pkg/types"
 )
 
 // Enroller handles the agent enrollment process.
 type Enroller struct {
-    apiURL      string
-    joinToken   string
-    certManager *security.CertificateManager
-    logger      *logger.Logger
-    httpClient  *http.Client
-    sysProvider SystemInfoProvider
+	apiURL      string
+	joinToken   string
+	certManager *security.CertificateManager
+	logger      *logger.Logger
+	httpClient  *http.Client
+	sysProvider SystemInfoProvider
 }
 
 // Config holds the enrollment configuration.
 type Config struct {
-    APIURL      string
-    JoinToken   string
-    CertDir     string
-    Timeout     time.Duration
+	APIURL    string
+	JoinToken string
+	CertDir   string
+	Timeout   time.Duration
 }
 
 // SystemInfoProvider provides hardware info collection without importing services
 type SystemInfoProvider interface {
-    GetHardwareInfo(ctx context.Context) (*types.HardwareInfo, error)
+	GetHardwareInfo(ctx context.Context) (*types.HardwareInfo, error)
 }
 
 // EnrollmentRequest represents the enrollment request payload.
@@ -47,12 +47,12 @@ type EnrollmentRequest struct {
 
 // EnrollmentResponse represents the enrollment response.
 type EnrollmentResponse struct {
-	Success           bool   `json:"success"`
-	ServerUID         string `json:"server_uid"`
-	CertificatePEM    string `json:"certificate_pem"`
-	CACertificatePEM  string `json:"ca_certificate_pem"`
-	RenewalEndpoint   string `json:"renewal_endpoint"`
-	RenewalThreshold  float64 `json:"renewal_threshold"`
+	Success             bool    `json:"success"`
+	ServerUID           string  `json:"server_uid"`
+	CertificatePEM      string  `json:"certificate_pem"`
+	CACertificatePEM    string  `json:"ca_certificate_pem"`
+	RenewalEndpoint     string  `json:"renewal_endpoint"`
+	RenewalThreshold    float64 `json:"renewal_threshold"`
 	CertificateMetadata struct {
 		SerialNumber string `json:"serial_number"`
 		NotBefore    string `json:"not_before"`
@@ -71,16 +71,16 @@ func NewEnroller(config Config, logger *logger.Logger, provider SystemInfoProvid
 
 	certManager := security.NewCertificateManager(config.CertDir, logger)
 
-    return &Enroller{
-        apiURL:      config.APIURL,
-        joinToken:   config.JoinToken,
-        certManager: certManager,
-        logger:      logger.With("component", "enroller"),
-        httpClient: &http.Client{
-            Timeout: timeout,
-        },
-        sysProvider: provider,
-    }
+	return &Enroller{
+		apiURL:      config.APIURL,
+		joinToken:   config.JoinToken,
+		certManager: certManager,
+		logger:      logger.With("component", "enroller"),
+		httpClient: &http.Client{
+			Timeout: timeout,
+		},
+		sysProvider: provider,
+	}
 }
 
 // Enroll performs the complete enrollment process.
@@ -147,7 +147,7 @@ func (e *Enroller) Enroll() (*EnrollmentResult, error) {
 		return nil, fmt.Errorf("failed to store certificates: %w", err)
 	}
 
-	e.logger.Info("Agent enrollment completed successfully", 
+	e.logger.Info("Agent enrollment completed successfully",
 		"server_uid", response.ServerUID,
 		"serial_number", response.CertificateMetadata.SerialNumber)
 
@@ -183,7 +183,7 @@ func (e *Enroller) sendEnrollmentRequest(csrPEM []byte, hardwareInfo map[string]
 	}
 
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("User-Agent", "PulseUp-Agent/1.0")
+	req.Header.Set("User-Agent", "Outlap-Agent/1.0")
 
 	e.logger.Debug("Sending enrollment request", "url", url)
 
@@ -214,25 +214,25 @@ func (e *Enroller) sendEnrollmentRequest(csrPEM []byte, hardwareInfo map[string]
 
 // collectHardwareInfo gathers system hardware information.
 func (e *Enroller) collectHardwareInfo() (map[string]interface{}, error) {
-    // Use provided system info provider to gather hardware info
-    if e.sysProvider == nil {
-        return nil, fmt.Errorf("system info provider is not configured")
-    }
-    info, err := e.sysProvider.GetHardwareInfo(context.Background())
-    if err != nil {
-        return nil, fmt.Errorf("failed to get hardware info: %w", err)
-    }
+	// Use provided system info provider to gather hardware info
+	if e.sysProvider == nil {
+		return nil, fmt.Errorf("system info provider is not configured")
+	}
+	info, err := e.sysProvider.GetHardwareInfo(context.Background())
+	if err != nil {
+		return nil, fmt.Errorf("failed to get hardware info: %w", err)
+	}
 
-    // Convert structured hardware info to a generic map for the enrollment payload
-    var hwMap map[string]interface{}
-    b, err := json.Marshal(info)
-    if err != nil {
-        return nil, fmt.Errorf("failed to marshal hardware info: %w", err)
-    }
-    if err := json.Unmarshal(b, &hwMap); err != nil {
-        return nil, fmt.Errorf("failed to convert hardware info to map: %w", err)
-    }
-    return hwMap, nil
+	// Convert structured hardware info to a generic map for the enrollment payload
+	var hwMap map[string]interface{}
+	b, err := json.Marshal(info)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal hardware info: %w", err)
+	}
+	if err := json.Unmarshal(b, &hwMap); err != nil {
+		return nil, fmt.Errorf("failed to convert hardware info to map: %w", err)
+	}
+	return hwMap, nil
 }
 
 // EnrollmentResult contains the result of an enrollment attempt.

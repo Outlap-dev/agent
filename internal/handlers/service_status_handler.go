@@ -6,9 +6,10 @@ import (
 	"fmt"
 	"strings"
 
+	"outlap-agent-go/pkg/logger"
+	"outlap-agent-go/pkg/types"
+
 	"github.com/docker/docker/errdefs"
-	"pulseup-agent-go/pkg/logger"
-	"pulseup-agent-go/pkg/types"
 )
 
 // ServiceStatusHandler handles requests to retrieve service status information.

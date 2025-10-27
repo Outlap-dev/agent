@@ -12,8 +12,8 @@ import (
 	"sort"
 	"strings"
 
-	"pulseup-agent-go/pkg/logger"
-	"pulseup-agent-go/pkg/types"
+	"outlap-agent-go/pkg/logger"
+	"outlap-agent-go/pkg/types"
 
 	"gopkg.in/yaml.v3"
 )
@@ -122,7 +122,7 @@ func (s *DockerComposeServiceImpl) Deploy(ctx context.Context, req *types.Docker
 		{
 			ID:          deploymentStepDeployImage,
 			Name:        "Finalize deployment",
-			Description: "Applying PulseUp labels",
+			Description: "Applying Outlap labels",
 			Status:      types.DeploymentStepStatusPending,
 			LogType:     "deploy",
 		},
@@ -195,7 +195,7 @@ func (s *DockerComposeServiceImpl) Deploy(ctx context.Context, req *types.Docker
 
 	projectName := strings.TrimSpace(req.ProjectName)
 	if projectName == "" {
-		projectName = fmt.Sprintf("pulseup-%s", req.ServiceUID)
+		projectName = fmt.Sprintf("outlap-%s", req.ServiceUID)
 		appendStepLog(deploymentStepInitialize, "INFO", fmt.Sprintf("Defaulting project name to %s", projectName))
 	}
 
@@ -298,15 +298,15 @@ func (s *DockerComposeServiceImpl) Deploy(ctx context.Context, req *types.Docker
 		s.logManager.AppendLogEntry(serviceUID, deploymentUID, "build", "INFO", "docker compose up completed successfully")
 	}
 
-	startStep(deploymentStepDeployImage, "Finalize deployment", "Applying PulseUp labels", "deploy")
+	startStep(deploymentStepDeployImage, "Finalize deployment", "Applying Outlap labels", "deploy")
 	if !labelsViaOverride {
-		appendStepLog(deploymentStepDeployImage, "INFO", "Applying PulseUp labels to compose containers")
+		appendStepLog(deploymentStepDeployImage, "INFO", "Applying Outlap labels to compose containers")
 		if err := s.labelComposeContainers(ctx, projectName, req.ServiceUID, req.DeploymentUID); err != nil {
-			s.logger.Warn("Failed to add PulseUp labels to compose containers", "error", err)
+			s.logger.Warn("Failed to add Outlap labels to compose containers", "error", err)
 			appendStepLog(deploymentStepDeployImage, "WARN", fmt.Sprintf("Failed to label containers: %v", err))
 		}
 	} else {
-		appendStepLog(deploymentStepDeployImage, "INFO", "PulseUp labels applied via override file")
+		appendStepLog(deploymentStepDeployImage, "INFO", "Outlap labels applied via override file")
 	}
 
 	completeStep(deploymentStepDeployImage)
@@ -334,7 +334,7 @@ func formatEnv(environment map[string]string) []string {
 	return formatted
 }
 
-// labelComposeContainers adds PulseUp management labels to all containers in a compose project
+// labelComposeContainers adds Outlap management labels to all containers in a compose project
 func (s *DockerComposeServiceImpl) labelComposeContainers(ctx context.Context, projectName, serviceUID, deploymentUID string) error {
 	// Find all containers with the compose project label
 	listArgs := []string{"ps", "-a", "-q", "--filter", fmt.Sprintf("label=com.docker.compose.project=%s", projectName)}
@@ -361,9 +361,9 @@ func (s *DockerComposeServiceImpl) labelComposeContainers(ctx context.Context, p
 		// Try using docker container update to add labels
 		labelArgs := []string{
 			"container", "update",
-			"--label-add", fmt.Sprintf("pulseup.managed=true"),
-			"--label-add", fmt.Sprintf("pulseup.service_uid=%s", serviceUID),
-			"--label-add", fmt.Sprintf("pulseup.deployment_uid=%s", deploymentUID),
+			"--label-add", fmt.Sprintf("outlap.managed=true"),
+			"--label-add", fmt.Sprintf("outlap.service_uid=%s", serviceUID),
+			"--label-add", fmt.Sprintf("outlap.deployment_uid=%s", deploymentUID),
 			containerID,
 		}
 
@@ -374,9 +374,9 @@ func (s *DockerComposeServiceImpl) labelComposeContainers(ctx context.Context, p
 			s.logger.Warn("Could not add labels to container (requires Docker 25.0+)",
 				"container_id", containerID,
 				"error", err,
-				"note", "Container deployed successfully but missing PulseUp management labels")
+				"note", "Container deployed successfully but missing Outlap management labels")
 		} else {
-			s.logger.Debug("Added PulseUp labels to container", "container_id", containerID)
+			s.logger.Debug("Added Outlap labels to container", "container_id", containerID)
 		}
 	}
 
@@ -514,9 +514,9 @@ func (s *DockerComposeServiceImpl) createLabelOverrideFile(workDir string, servi
 	for _, svc := range normalized {
 		override := serviceOverride{
 			Labels: map[string]string{
-				"pulseup.managed":        "true",
-				"pulseup.service_uid":    serviceUID,
-				"pulseup.deployment_uid": deploymentUID,
+				"outlap.managed":        "true",
+				"outlap.service_uid":    serviceUID,
+				"outlap.deployment_uid": deploymentUID,
 			},
 		}
 		if !portsAssigned && len(overridePorts) > 0 {
@@ -535,7 +535,7 @@ func (s *DockerComposeServiceImpl) createLabelOverrideFile(workDir string, servi
 		return "", nil, fmt.Errorf("failed to marshal compose override: %w", err)
 	}
 
-	file, err := os.CreateTemp(workDir, "pulseup-compose-override-*.yml")
+	file, err := os.CreateTemp(workDir, "outlap-compose-override-*.yml")
 	if err != nil {
 		return "", nil, fmt.Errorf("failed to create compose override file: %w", err)
 	}

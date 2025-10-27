@@ -820,6 +820,5 @@ type UpdateConfig struct {
 	Enabled             bool   `json:"enabled"`
 	AutoUpdate          bool   `json:"auto_update"`
 	UpdateIntervalHours int    `json:"update_interval_hours"`
-	UpdateURL           string `json:"update_url"`
 	PublicKeyPath       string `json:"public_key_path"`
 }

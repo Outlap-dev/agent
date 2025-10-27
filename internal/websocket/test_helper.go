@@ -8,10 +8,10 @@ import (
 	"testing"
 	"time"
 
-	"pulseup-agent-go/internal/config"
-	"pulseup-agent-go/internal/security"
-	"pulseup-agent-go/internal/testws"
-	"pulseup-agent-go/pkg/logger"
+	"outlap-agent-go/internal/config"
+	"outlap-agent-go/internal/security"
+	"outlap-agent-go/internal/testws"
+	"outlap-agent-go/pkg/logger"
 )
 
 // TestHelper provides utilities for setting up mTLS-based WebSocket tests
@@ -26,7 +26,7 @@ type TestHelper struct {
 // NewTestHelper creates a new test helper with certificates and test server
 func NewTestHelper(t *testing.T) *TestHelper {
 	// Create temporary directory for test certificates
-	tempDir, err := os.MkdirTemp("", "pulseup-test-certs-*")
+	tempDir, err := os.MkdirTemp("", "outlap-test-certs-*")
 	if err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)
 	}
@@ -45,7 +45,7 @@ func NewTestHelper(t *testing.T) *TestHelper {
 
 	// Create test configuration
 	config := &config.Config{
-		WebSocketURL:                 "", // Will be set after server starts
+		WebSocketURL:                 "",    // Will be set after server starts
 		ReconnectEnabled:             false, // Disable for simpler testing
 		AuthWaitForConfirmation:      true,
 		AuthPermanentFailureCooldown: 60,

@@ -8,8 +8,8 @@ import (
 	"path/filepath"
 	"time"
 
-	"pulseup-agent-go/pkg/logger"
-	"pulseup-agent-go/pkg/types"
+	"outlap-agent-go/pkg/logger"
+	"outlap-agent-go/pkg/types"
 
 	"github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing/transport/http"
@@ -75,7 +75,7 @@ func (h *AppInstallationHandler) Install(ctx context.Context, data json.RawMessa
 	h.logger.Info("Installing app", "service_uid", request.ServiceUID, "github_repo", request.GitHubRepo)
 
 	// Check if repo is already cloned
-	baseCloneDir := "/opt/pulseup/apps"
+	baseCloneDir := "/opt/outlap/apps"
 	if os.Getenv("DEBUG") == "true" {
 		if debugDir := os.Getenv("DEBUG_CLONE_DIR"); debugDir != "" {
 			baseCloneDir = debugDir
@@ -148,7 +148,7 @@ func (h *AppInstallationHandler) cloneGitHubRepoWithToken(ctx context.Context, g
 	h.logger.Info("Cloning GitHub repository with token", "github_repo", githubRepo, "service_uid", serviceUID)
 
 	// Construct the clone path using the service UID
-	baseCloneDir := "/opt/pulseup/apps"
+	baseCloneDir := "/opt/outlap/apps"
 	if os.Getenv("DEBUG") == "true" {
 		if debugDir := os.Getenv("DEBUG_CLONE_DIR"); debugDir != "" {
 			baseCloneDir = debugDir

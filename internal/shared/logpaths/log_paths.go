@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 )
 
-const defaultDeploymentLogsDir = "/var/log/pulseup/deployments"
+const defaultDeploymentLogsDir = "/var/log/outlap/deployments"
 
 // ResolveDeploymentLogsDir returns the base directory where deployment logs are stored.
 // It mirrors the logic used by deployment services to persist build and deployment logs

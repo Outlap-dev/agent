@@ -4,10 +4,10 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"pulseup-agent-go/internal/websocket"
-	wsTypes "pulseup-agent-go/internal/websocket/types"
-	wscontracts "pulseup-agent-go/pkg/contracts/websocket"
-	"pulseup-agent-go/pkg/types"
+	"outlap-agent-go/internal/websocket"
+	wsTypes "outlap-agent-go/internal/websocket/types"
+	wscontracts "outlap-agent-go/pkg/contracts/websocket"
+	"outlap-agent-go/pkg/types"
 )
 
 // Bundle groups the mTLS WebSocket client with its lightweight adapter.

@@ -17,10 +17,10 @@ import (
 	"sync"
 	"time"
 
-	"pulseup-agent-go/internal/config"
-	"pulseup-agent-go/internal/update"
-	"pulseup-agent-go/pkg/logger"
-	"pulseup-agent-go/pkg/types"
+	"outlap-agent-go/internal/config"
+	"outlap-agent-go/internal/update"
+	"outlap-agent-go/pkg/logger"
+	"outlap-agent-go/pkg/types"
 )
 
 type updateService struct {
@@ -297,7 +297,7 @@ func (s *updateService) githubAPIError(resp *http.Response) error {
 }
 
 func (s *updateService) artifactName() string {
-	return fmt.Sprintf("pulseup-agent_%s_%s", runtime.GOOS, runtime.GOARCH)
+	return fmt.Sprintf("outlap-agent_%s_%s", runtime.GOOS, runtime.GOARCH)
 }
 
 func findReleaseAssets(baseName string, assets []githubReleaseAsset) (binary, checksum, signature *githubReleaseAsset) {
@@ -336,7 +336,7 @@ func (s *updateService) decorateRequest(req *http.Request, accept string) {
 		accept = "application/vnd.github+json"
 	}
 	req.Header.Set("Accept", accept)
-	req.Header.Set("User-Agent", fmt.Sprintf("PulseUp-Agent-Go/%s", config.GetVersionString()))
+	req.Header.Set("User-Agent", fmt.Sprintf("Outlap-Agent-Go/%s", config.GetVersionString()))
 }
 
 func parseRepositoryIdentifier(repo string) (string, string, error) {
@@ -370,13 +370,13 @@ func (s *updateService) DownloadUpdate(ctx context.Context, metadata *types.Upda
 	s.logger.Info("Downloading update", "version", metadata.Version, "url", metadata.DownloadURL)
 
 	// Create temp directory for update
-	tempDir, err := os.MkdirTemp("", "pulseup-update-*")
+	tempDir, err := os.MkdirTemp("", "outlap-update-*")
 	if err != nil {
 		return "", fmt.Errorf("failed to create temp directory: %w", err)
 	}
 
 	// Download update file
-	updateFile := filepath.Join(tempDir, fmt.Sprintf("pulseup-agent_%s_%s_%s",
+	updateFile := filepath.Join(tempDir, fmt.Sprintf("outlap-agent_%s_%s_%s",
 		metadata.Version, runtime.GOOS, runtime.GOARCH))
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, metadata.DownloadURL, nil)
@@ -478,7 +478,7 @@ func (s *updateService) ApplyUpdate(ctx context.Context, metadata *types.UpdateM
 // triggerSystemdUpdate prepares update files and triggers systemd path-based updater
 func (s *updateService) triggerSystemdUpdate(ctx context.Context, metadata *types.UpdateMetadata, filePath string) error {
 	// Extract the update archive to staging directory
-	stagingDir := "/var/lib/pulseup"
+	stagingDir := "/var/lib/outlap"
 	if err := os.MkdirAll(stagingDir, 0755); err != nil {
 		return fmt.Errorf("failed to create staging directory: %w", err)
 	}
@@ -488,13 +488,13 @@ func (s *updateService) triggerSystemdUpdate(ctx context.Context, metadata *type
 		return fmt.Errorf("failed to extract update: %w", err)
 	}
 
-	newBinary := filepath.Join(stagingDir, "pulseup-agent")
+	newBinary := filepath.Join(stagingDir, "outlap-agent")
 	if _, err := os.Stat(newBinary); err != nil {
 		return fmt.Errorf("new binary not found in archive: %w", err)
 	}
 
 	// Move binary to staging location expected by updater
-	stagingBinary := filepath.Join(stagingDir, "pulseup-agent.new")
+	stagingBinary := filepath.Join(stagingDir, "outlap-agent.new")
 	if err := os.Rename(newBinary, stagingBinary); err != nil {
 		return fmt.Errorf("failed to move binary to staging: %w", err)
 	}
@@ -505,7 +505,7 @@ func (s *updateService) triggerSystemdUpdate(ctx context.Context, metadata *type
 
 	// Write checksum file
 	checksumFile := stagingBinary + ".sha256"
-	if err := os.WriteFile(checksumFile, []byte(metadata.SHA256+"  pulseup-agent.new\n"), 0644); err != nil {
+	if err := os.WriteFile(checksumFile, []byte(metadata.SHA256+"  outlap-agent.new\n"), 0644); err != nil {
 		return fmt.Errorf("failed to write checksum file: %w", err)
 	}
 
@@ -516,7 +516,7 @@ func (s *updateService) triggerSystemdUpdate(ctx context.Context, metadata *type
 	}
 
 	// Trigger systemd path watcher by writing update request
-	updateRequestPath := "/run/pulseup/update.request"
+	updateRequestPath := "/run/outlap/update.request"
 	if err := os.MkdirAll(filepath.Dir(updateRequestPath), 0755); err != nil {
 		return fmt.Errorf("failed to create run directory: %w", err)
 	}

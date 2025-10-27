@@ -1,4 +1,4 @@
-// PulseUp Agent - single-process unprivileged agent
+// Outlap Agent - single-process unprivileged agent
 package main
 
 import (
@@ -9,15 +9,15 @@ import (
 	"syscall"
 	"time"
 
-	"pulseup-agent-go/internal/config"
-	"pulseup-agent-go/internal/worker"
-	"pulseup-agent-go/pkg/logger"
+	"outlap-agent-go/internal/config"
+	"outlap-agent-go/internal/worker"
+	"outlap-agent-go/pkg/logger"
 )
 
 func main() {
 	// Ensure we're NOT running as root
 	if os.Getuid() == 0 {
-		fmt.Fprintf(os.Stderr, "Error: pulseup-agent must NOT run as root for security\n")
+		fmt.Fprintf(os.Stderr, "Error: outlap-agent must NOT run as root for security\n")
 		os.Exit(1)
 	}
 
@@ -34,7 +34,7 @@ func main() {
 		logLevel = logger.LogLevelDebug
 	}
 	mainLogger := logger.NewWithLevel(logLevel)
-	mainLogger.Info("Starting PulseUp Agent",
+	mainLogger.Info("Starting Outlap Agent",
 		"version", config.GetVersionString(),
 		"build_date", config.BuildDate,
 		"git_commit", config.GitCommit,

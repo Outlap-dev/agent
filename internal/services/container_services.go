@@ -1,8 +1,8 @@
 package services
 
 import (
-	"pulseup-agent-go/internal/config"
-	"pulseup-agent-go/pkg/logger"
+	"outlap-agent-go/internal/config"
+	"outlap-agent-go/pkg/logger"
 )
 
 type serviceBundle struct {
@@ -133,6 +133,14 @@ func (b *serviceBundle) apply(c *ServiceContainer) {
 
 	c.statusSvc = b.statusImpl
 	c.statusService = b.statusService
+
+	// Wire status service and session manager into Caddy service
+	if b.caddyImpl != nil {
+		b.caddyImpl.SetStatusService(b.statusService)
+		if c.sessionManager != nil {
+			b.caddyImpl.SetSessionManager(c.sessionManager)
+		}
+	}
 
 	c.containerEventSvc = b.containerEventImpl
 	c.containerEventService = b.containerEventService

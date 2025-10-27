@@ -6,8 +6,8 @@ import (
 	"math"
 	"time"
 
-	"pulseup-agent-go/pkg/logger"
-	"pulseup-agent-go/pkg/types"
+	"outlap-agent-go/pkg/logger"
+	"outlap-agent-go/pkg/types"
 )
 
 type HardwareReporter struct {

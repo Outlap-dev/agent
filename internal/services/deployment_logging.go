@@ -11,8 +11,10 @@ import (
 	"strings"
 	"time"
 
-	"pulseup-agent-go/pkg/logger"
-	"pulseup-agent-go/pkg/types"
+	"errors"
+
+	"outlap-agent-go/pkg/logger"
+	"outlap-agent-go/pkg/types"
 )
 
 type deploymentLogManager struct {
@@ -141,6 +143,34 @@ func (m *deploymentLogManager) RunCommand(ctx context.Context, command []string,
 	cmd.Dir = workDir
 
 	baseEnv := os.Environ()
+	dockerConfigSet := false
+	for _, e := range baseEnv {
+		if strings.HasPrefix(e, "DOCKER_CONFIG=") {
+			dockerConfigSet = true
+			break
+		}
+	}
+	if !dockerConfigSet {
+		defaultDockerConfig := filepath.Join("/var/lib/outlap", "docker-config")
+		if err := os.MkdirAll(defaultDockerConfig, 0o750); err != nil {
+			m.logger.Warn("Failed to ensure default Docker config dir", "dir", defaultDockerConfig, "error", err)
+			fallbackDockerConfig := filepath.Join(os.TempDir(), "outlap-docker-config")
+			if fallbackErr := os.MkdirAll(fallbackDockerConfig, 0o700); fallbackErr != nil {
+				m.logger.Warn("Failed to create fallback Docker config dir", "dir", fallbackDockerConfig, "error", fallbackErr)
+			} else {
+				defaultDockerConfig = fallbackDockerConfig
+			}
+		}
+		configFile := filepath.Join(defaultDockerConfig, "config.json")
+		if _, err := os.Stat(configFile); errors.Is(err, os.ErrNotExist) {
+			if writeErr := os.WriteFile(configFile, []byte("{}\n"), 0o644); writeErr != nil {
+				m.logger.Warn("Failed to initialize Docker config", "file", configFile, "error", writeErr)
+			}
+		} else if err != nil {
+			m.logger.Warn("Failed to stat Docker config", "file", configFile, "error", err)
+		}
+		baseEnv = append(baseEnv, fmt.Sprintf("DOCKER_CONFIG=%s", defaultDockerConfig))
+	}
 	if os.Geteuid() != 0 {
 		hasHome := false
 		for _, e := range baseEnv {

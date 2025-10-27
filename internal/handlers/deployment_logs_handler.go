@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
-	"pulseup-agent-go/pkg/logger"
-	"pulseup-agent-go/pkg/types"
+	"outlap-agent-go/pkg/logger"
+	"outlap-agent-go/pkg/types"
 )
 
 // DeploymentLogsHandler handles requests to retrieve deployment logs.
@@ -121,7 +121,7 @@ func (h *DeploymentLogsHandler) Fetch(ctx context.Context, data json.RawMessage)
 
 // getBuildLogContent retrieves the raw build log content for a deployment or service.
 func (h *DeploymentLogsHandler) getBuildLogContent(serviceUID, deploymentUID string) (string, error) {
-	logsDir := "/var/log/pulseup/deployments"
+	logsDir := "/var/log/outlap/deployments"
 
 	// Check if we're in debug mode
 	if os.Getenv("DEBUG") == "true" {
@@ -148,7 +148,7 @@ func (h *DeploymentLogsHandler) getDeploymentSteps(serviceUID, deploymentUID str
 		return nil, fmt.Errorf("deployment_uid is required to fetch deployment steps")
 	}
 
-	logsDir := "/var/log/pulseup/deployments"
+	logsDir := "/var/log/outlap/deployments"
 	if os.Getenv("DEBUG") == "true" {
 		if debugDir := os.Getenv("DEBUG_LOG_DIR"); debugDir != "" {
 			logsDir = filepath.Join(debugDir, "deployments")

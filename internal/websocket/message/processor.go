@@ -7,8 +7,8 @@ import (
 	"sync"
 	"time"
 
-	"pulseup-agent-go/internal/websocket/types"
-	"pulseup-agent-go/pkg/logger"
+	"outlap-agent-go/internal/websocket/types"
+	"outlap-agent-go/pkg/logger"
 )
 
 // Processor handles incoming WebSocket messages and routing

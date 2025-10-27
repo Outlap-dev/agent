@@ -11,9 +11,9 @@ import (
 	"github.com/docker/docker/api/types/events"
 	"github.com/docker/docker/api/types/filters"
 
-	wscontracts "pulseup-agent-go/pkg/contracts/websocket"
-	"pulseup-agent-go/pkg/logger"
-	pulseuptypes "pulseup-agent-go/pkg/types"
+	wscontracts "outlap-agent-go/pkg/contracts/websocket"
+	"outlap-agent-go/pkg/logger"
+	pulseuptypes "outlap-agent-go/pkg/types"
 )
 
 // dockerEventsClient exposes the subset of Docker client functionality needed for streaming events.
@@ -98,7 +98,7 @@ func (c *ContainerEventServiceImpl) Stop(ctx context.Context) error {
 func (c *ContainerEventServiceImpl) run(ctx context.Context) {
 	filterArgs := filters.NewArgs()
 	filterArgs.Add("type", "container")
-	filterArgs.Add("label", "pulseup.managed=true")
+	filterArgs.Add("label", "outlap.managed=true")
 
 	options := events.ListOptions{Filters: filterArgs}
 	backoff := time.Second
@@ -165,11 +165,11 @@ func (c *ContainerEventServiceImpl) handleEvent(ctx context.Context, msg events.
 		return
 	}
 
-	if attrs["pulseup.managed"] != "true" {
+	if attrs["outlap.managed"] != "true" {
 		return
 	}
 
-	serviceUID := attrs["pulseup.service_uid"]
+	serviceUID := attrs["outlap.service_uid"]
 	if serviceUID == "" {
 		c.logger.Debug("Managed container event missing service UID", "action", msg.Action, "container", msg.Actor.ID)
 		return
@@ -236,7 +236,7 @@ func (c *ContainerEventServiceImpl) emitContainerStopped(msg events.Message, ser
 		"service_uid":    serviceUID,
 		"container_id":   msg.Actor.ID,
 		"container_name": msg.Actor.Attributes["name"],
-		"deployment_uid": msg.Actor.Attributes["pulseup.deployment_uid"],
+		"deployment_uid": msg.Actor.Attributes["outlap.deployment_uid"],
 		"action":         string(msg.Action),
 		"timestamp":      ts.UTC().Format(time.RFC3339Nano),
 	}

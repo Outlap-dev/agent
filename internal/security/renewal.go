@@ -2,20 +2,20 @@
 package security
 
 import (
-    "bytes"
-    "crypto/tls"
-    "crypto/x509"
-    "encoding/pem"
-    "encoding/json"
-    "fmt"
-    "io"
+	"bytes"
+	"crypto/tls"
+	"crypto/x509"
+	"encoding/json"
+	"encoding/pem"
+	"fmt"
+	"io"
 	"math/rand"
 	"net/http"
 	"os"
 	"strings"
 	"time"
 
-	"pulseup-agent-go/pkg/logger"
+	"outlap-agent-go/pkg/logger"
 )
 
 // CertificateRenewer handles certificate renewal operations.
@@ -192,22 +192,22 @@ func (r *CertificateRenewer) sendRenewalRequest(csrPEM []byte, currentSerial str
 		return nil, fmt.Errorf("failed to create mTLS client: %w", err)
 	}
 
-    url := r.apiURL + "/api/agent/renew"
-    req, err := http.NewRequest("POST", url, bytes.NewBuffer(requestBody))
-    if err != nil {
-        return nil, fmt.Errorf("failed to create request: %w", err)
-    }
+	url := r.apiURL + "/api/agent/renew"
+	req, err := http.NewRequest("POST", url, bytes.NewBuffer(requestBody))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
 
-    req.Header.Set("Content-Type", "application/json")
-    req.Header.Set("User-Agent", "PulseUp-Agent/1.0")
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("User-Agent", "Outlap-Agent/1.0")
 
-    // Include client certificate PEM in header for proxies that terminate TLS
-    // so the backend can still verify the caller at application layer
-    if cert, err := r.certManager.LoadCertificate(); err == nil && len(cert.Certificate) > 0 {
-        pemBlock := &pem.Block{Type: "CERTIFICATE", Bytes: cert.Certificate[0]}
-        pemBytes := pem.EncodeToMemory(pemBlock)
-        req.Header.Set("X-Client-Certificate", string(pemBytes))
-    }
+	// Include client certificate PEM in header for proxies that terminate TLS
+	// so the backend can still verify the caller at application layer
+	if cert, err := r.certManager.LoadCertificate(); err == nil && len(cert.Certificate) > 0 {
+		pemBlock := &pem.Block{Type: "CERTIFICATE", Bytes: cert.Certificate[0]}
+		pemBytes := pem.EncodeToMemory(pemBlock)
+		req.Header.Set("X-Client-Certificate", string(pemBytes))
+	}
 
 	r.logger.Debug("Sending renewal request via mTLS", "url", url)
 
@@ -277,7 +277,7 @@ func (r *CertificateRenewer) extractServerUIDFromCertificate(cert *x509.Certific
 	// Try to extract from DNS names first
 	for _, dnsName := range cert.DNSNames {
 		if len(dnsName) > 6 && dnsName[:6] == "agent-" {
-			// Extract UID from "agent-{uid}.pulseup.local" format
+			// Extract UID from "agent-{uid}.outlap.local" format
 			if idx := strings.Index(dnsName, "."); idx > 6 {
 				return dnsName[6:idx]
 			}

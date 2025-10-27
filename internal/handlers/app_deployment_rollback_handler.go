@@ -7,8 +7,8 @@ import (
 	"strings"
 	"time"
 
-	"pulseup-agent-go/pkg/logger"
-	"pulseup-agent-go/pkg/types"
+	"outlap-agent-go/pkg/logger"
+	"outlap-agent-go/pkg/types"
 )
 
 // AppDeploymentRollbackHandler handles application rollback requests
@@ -188,7 +188,7 @@ func (h *AppDeploymentRollbackHandler) Rollback(ctx context.Context, data json.R
 		if len(short) > 12 {
 			short = short[:12]
 		}
-		rollbackImage = fmt.Sprintf("pulseup-app-%s:%s", request.ServiceUID, short)
+		rollbackImage = fmt.Sprintf("outlap-app-%s:%s", request.ServiceUID, short)
 	}
 
 	if rollbackImage == "" {

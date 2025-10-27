@@ -4,8 +4,8 @@ import (
 	"context"
 	"encoding/json"
 
-	"pulseup-agent-go/pkg/logger"
-	"pulseup-agent-go/pkg/types"
+	"outlap-agent-go/pkg/logger"
+	"outlap-agent-go/pkg/types"
 )
 
 // ServerHandler aggregates server-centric commands such as live stats.

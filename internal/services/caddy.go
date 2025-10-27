@@ -12,7 +12,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"pulseup-agent-go/pkg/logger"
+	"outlap-agent-go/pkg/logger"
+	"outlap-agent-go/pkg/types"
 
 	dockertypes "github.com/docker/docker/api/types"
 	containertypes "github.com/docker/docker/api/types/container"
@@ -26,31 +27,34 @@ import (
 )
 
 const (
-	CaddyStateDir            = "/etc/pulseup-agent/caddy"
-	CaddyConfigDir           = "/etc/pulseup-agent/caddy/config"
-	CaddyConfigFile          = "/etc/pulseup-agent/caddy/config/Caddyfile"
-	CaddyDataDir             = "/etc/pulseup-agent/caddy/data"
-	CaddyDomainsFile         = "/etc/pulseup-agent/caddy/domains.json"
-	CaddyDomainsStateFile    = "/etc/pulseup-agent/caddy/domains.v2.json"
+	CaddyStateDir            = "/etc/outlap-agent/caddy"
+	CaddyConfigDir           = "/etc/outlap-agent/caddy/config"
+	CaddyConfigFile          = "/etc/outlap-agent/caddy/config/Caddyfile"
+	CaddyDataDir             = "/etc/outlap-agent/caddy/data"
+	CaddyDomainsFile         = "/etc/outlap-agent/caddy/domains.json"
+	CaddyDomainsStateFile    = "/etc/outlap-agent/caddy/domains.v2.json"
 	CaddyContainerName       = "caddy"
 	CaddyContainerConfigDir  = "/etc/caddy"
 	CaddyContainerConfigFile = "/etc/caddy/Caddyfile"
 	CaddyContainerDataDir    = "/data"
-	CaddyNetwork             = "pulseup-net"
+	CaddyNetwork             = "outlap-net"
 	CaddyBridgeNetwork       = "bridge"
 	CaddyServiceUID          = "svc_pulseup_caddy"
 	CaddyDeploymentUID       = "dep_pulseup_caddy"
-	CaddyLifecycleName       = "pulseup-caddy"
+	CaddyLifecycleName       = "outlap-caddy"
 	CaddyLifecycleVersion    = "1"
-	CaddyComponentLabel      = "pulseup.component"
+	CaddyComponentLabel      = "outlap.component"
 	DefaultPort              = "80"
 )
 
 const (
-	defaultCaddyEmail = "domains@pulseup.io"
+	defaultCaddyEmail = "domains@outlap.dev"
 )
 
-var ErrContainerNotFound = errors.New("container not found")
+var (
+	ErrContainerNotFound = errors.New("container not found")
+	ErrPortConflict      = errors.New("port already in use")
+)
 
 type DomainConfig struct {
 	Domain  string            `json:"domain"`
@@ -60,9 +64,11 @@ type DomainConfig struct {
 }
 
 type caddyService struct {
-	dockerClient *client.Client
-	logger       *logger.Logger
-	hostRoot     string
+	dockerClient   *client.Client
+	logger         *logger.Logger
+	hostRoot       string
+	statusService  StatusService
+	sessionManager *AgentSession
 }
 
 // NewCaddyService creates a new Caddy service instance
@@ -81,6 +87,16 @@ func NewCaddyService(dockerClient *client.Client, logger *logger.Logger) CaddySe
 		logger:       logger,
 		hostRoot:     hostRoot,
 	}
+}
+
+// SetStatusService sets the status service for error reporting
+func (c *caddyService) SetStatusService(statusService StatusService) {
+	c.statusService = statusService
+}
+
+// SetSessionManager sets the session manager for accessing server UID
+func (c *caddyService) SetSessionManager(sessionManager *AgentSession) {
+	c.sessionManager = sessionManager
 }
 
 // IsCaddyRunning checks if the Caddy container is running
@@ -149,7 +165,7 @@ func (c *caddyService) AddSite(ctx context.Context, domain, target string, ssl b
 	}
 
 	if upstreamContainer != "" {
-		// Ensure container is in the PulseUp proxy network
+		// Ensure container is in the Outlap proxy network
 		if err := c.ensureContainerInNetwork(ctx, upstreamContainer, CaddyNetwork); err != nil {
 			c.logger.Warn("failed to connect upstream container to network", "container", upstreamContainer, "network", CaddyNetwork, "error", err)
 		}
@@ -564,11 +580,11 @@ func (c *caddyService) resolveContainer(ctx context.Context, reference string) (
 
 	if strings.EqualFold(ref, CaddyContainerName) {
 		container, err := c.findContainerByLabels(ctx, ref, map[string]string{
-			managedLabelKey:          "true",
-			CaddyComponentLabel:      "caddy",
-			serviceUIDLabelKey:       CaddyServiceUID,
-			"pulseup.deployment_uid": CaddyDeploymentUID,
-			lifecycleFinalNameLabel:  CaddyLifecycleName,
+			managedLabelKey:         "true",
+			CaddyComponentLabel:     "caddy",
+			serviceUIDLabelKey:      CaddyServiceUID,
+			"outlap.deployment_uid": CaddyDeploymentUID,
+			lifecycleFinalNameLabel: CaddyLifecycleName,
 		})
 		if err != nil {
 			return nil, err
@@ -627,7 +643,16 @@ func (c *caddyService) pullImage(ctx context.Context, imageName string) error {
 func (c *caddyService) startCaddyContainer(ctx context.Context) error {
 	// Ensure the proxy network exists before we create the container
 	if err := c.ensureNetwork(ctx, CaddyNetwork); err != nil {
-		return fmt.Errorf("failed to ensure PulseUp network %s: %w", CaddyNetwork, err)
+		return fmt.Errorf("failed to ensure Outlap network %s: %w", CaddyNetwork, err)
+	}
+
+	// Check if ports 80 and 443 are available before attempting installation
+	if err := c.checkPortAvailability(ctx); err != nil {
+		c.logger.Error("Port conflict detected, cannot install Caddy", "error", err)
+		c.reportCaddyInstallFailure(ctx, "port_conflict", err, map[string]interface{}{
+			"ports": []string{"80", "443"},
+		})
+		return fmt.Errorf("port conflict detected: %w", err)
 	}
 
 	// Guarantee a Caddyfile exists so the container boots successfully
@@ -715,7 +740,16 @@ func (c *caddyService) startCaddyContainer(ctx context.Context) error {
 	// Start container
 	err = c.dockerClient.ContainerStart(ctx, response.ID, containertypes.StartOptions{})
 	if err != nil {
-		// TODO: Alert backend-go via websocket when port binding fails (e.g. ports 80/443 already in use) so the deployment can surface the issue to users.
+		// Check if this is a port binding error
+		if isPortConflictError(err) {
+			c.logger.Error("Port binding failed when starting Caddy container", "error", err)
+			c.reportCaddyInstallFailure(ctx, "port_conflict", err, map[string]interface{}{
+				"ports": []string{"80", "443"},
+			})
+			return fmt.Errorf("%w: %v", ErrPortConflict, err)
+		}
+		// Report other startup failures
+		c.reportCaddyInstallFailure(ctx, "container_start_failed", err, nil)
 		return err
 	}
 
@@ -739,14 +773,88 @@ func (c *caddyService) createBasicCaddyfile() error {
 	return c.generateCaddyfile(map[string]DomainConfig{}, defaultCaddyEmail)
 }
 
+// checkPortAvailability checks if ports 80 and 443 are available
+func (c *caddyService) checkPortAvailability(ctx context.Context) error {
+	containers, err := c.dockerClient.ContainerList(ctx, containertypes.ListOptions{All: false})
+	if err != nil {
+		return fmt.Errorf("failed to list containers: %w", err)
+	}
+
+	conflictingPorts := make(map[string][]string)
+	for _, container := range containers {
+		for _, port := range container.Ports {
+			if port.PublicPort == 80 || port.PublicPort == 443 {
+				portStr := fmt.Sprintf("%d", port.PublicPort)
+				containerName := strings.TrimPrefix(container.Names[0], "/")
+				conflictingPorts[portStr] = append(conflictingPorts[portStr], containerName)
+			}
+		}
+	}
+
+	if len(conflictingPorts) > 0 {
+		var conflicts []string
+		for port, containers := range conflictingPorts {
+			conflicts = append(conflicts, fmt.Sprintf("port %s used by %v", port, containers))
+		}
+		return fmt.Errorf("%w: %s", ErrPortConflict, strings.Join(conflicts, ", "))
+	}
+
+	return nil
+}
+
+// isPortConflictError checks if an error is related to port binding conflicts
+func isPortConflictError(err error) bool {
+	if err == nil {
+		return false
+	}
+	errMsg := strings.ToLower(err.Error())
+	return strings.Contains(errMsg, "address already in use") ||
+		strings.Contains(errMsg, "bind: address already in use") ||
+		strings.Contains(errMsg, "port is already allocated")
+}
+
+// reportCaddyInstallFailure reports Caddy installation failure to backend
+func (c *caddyService) reportCaddyInstallFailure(ctx context.Context, reason string, err error, metadata map[string]interface{}) {
+	if c.statusService == nil {
+		c.logger.Warn("Status service not available, cannot report Caddy install failure")
+		return
+	}
+
+	// Build error message
+	errorMsg := fmt.Sprintf("Caddy installation failed: %s", reason)
+	if err != nil {
+		errorMsg = fmt.Sprintf("%s - %v", errorMsg, err)
+	}
+
+	// Add server UID to metadata if available
+	if metadata == nil {
+		metadata = make(map[string]interface{})
+	}
+	metadata["reason"] = reason
+	metadata["component"] = "caddy"
+
+	if c.sessionManager != nil {
+		if serverUID := c.sessionManager.GetServerUID(); serverUID != "" {
+			metadata["server_uid"] = serverUID
+		}
+	}
+
+	// Report failure via status service
+	if updateErr := c.statusService.UpdateServiceStatus(ctx, CaddyServiceUID, types.ServiceStatusFailed, errorMsg); updateErr != nil {
+		c.logger.Error("Failed to report Caddy install failure to backend", "error", updateErr)
+	} else {
+		c.logger.Info("Reported Caddy install failure to backend", "reason", reason)
+	}
+}
+
 func caddyContainerLabels() map[string]string {
 	return map[string]string{
-		managedLabelKey:          "true",
-		serviceUIDLabelKey:       CaddyServiceUID,
-		"pulseup.deployment_uid": CaddyDeploymentUID,
-		lifecycleFinalNameLabel:  CaddyLifecycleName,
-		lifecycleVersionLabel:    CaddyLifecycleVersion,
-		CaddyComponentLabel:      "caddy",
+		managedLabelKey:         "true",
+		serviceUIDLabelKey:      CaddyServiceUID,
+		"outlap.deployment_uid": CaddyDeploymentUID,
+		lifecycleFinalNameLabel: CaddyLifecycleName,
+		lifecycleVersionLabel:   CaddyLifecycleVersion,
+		CaddyComponentLabel:     "caddy",
 	}
 }
 
@@ -834,11 +942,11 @@ func (c *caddyService) findContainerByLabels(ctx context.Context, reference stri
 }
 
 func extractServiceUIDFromName(name string) string {
-	if !strings.HasPrefix(name, "pulseup-app-") {
+	if !strings.HasPrefix(name, "outlap-app-") {
 		return ""
 	}
 
-	trimmed := strings.TrimPrefix(name, "pulseup-app-")
+	trimmed := strings.TrimPrefix(name, "outlap-app-")
 	idx := strings.LastIndex(strings.ToLower(trimmed), "-v")
 	if idx <= 0 {
 		return ""

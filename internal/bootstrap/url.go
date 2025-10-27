@@ -3,7 +3,7 @@ package bootstrap
 import (
 	"strings"
 
-	"pulseup-agent-go/internal/config"
+	"outlap-agent-go/internal/config"
 )
 
 // ConvertWebSocketToHTTP converts websocket endpoints into HTTP endpoints for REST calls.

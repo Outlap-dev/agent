@@ -3,8 +3,8 @@ package routes
 import (
 	"fmt"
 
-	"pulseup-agent-go/internal/handlers"
-	"pulseup-agent-go/pkg/logger"
+	"outlap-agent-go/internal/handlers"
+	"outlap-agent-go/pkg/logger"
 )
 
 // Router is the main entry point for route registration.
@@ -195,4 +195,5 @@ func RegisterAll(container Container, services handlers.ServiceProvider) {
 	RegisterAgentRoutes(router, handlerLogger, services)
 	RegisterServerRoutes(router, handlerLogger, services)
 	RegisterMonitoringRoutes(router, handlerLogger, services)
+	RegisterCaddyRoutes(router, handlerLogger, services)
 }

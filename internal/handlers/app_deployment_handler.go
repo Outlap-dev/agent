@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
-	"pulseup-agent-go/pkg/logger"
-	"pulseup-agent-go/pkg/types"
+	"outlap-agent-go/pkg/logger"
+	"outlap-agent-go/pkg/types"
 )
 
 // DeployApplicationHandler handles application deployment requests
@@ -109,7 +109,7 @@ func (h *DeployApplicationHandler) Deploy(ctx context.Context, data json.RawMess
 		h.logger.Error("Failed to update deployment status to in progress", "error", err)
 	}
 
-	deploymentDir := "/opt/pulseup/apps"
+	deploymentDir := "/opt/outlap/apps"
 	if os.Getenv("DEBUG") == "true" {
 		if debugDir := os.Getenv("DEBUG_DEPLOYMENT_DIR"); debugDir != "" {
 			deploymentDir = debugDir
@@ -312,7 +312,7 @@ func (h *DeployApplicationHandler) Deploy(ctx context.Context, data json.RawMess
 		if len(shortSHA) > 12 {
 			shortSHA = shortSHA[:12]
 		}
-		commitTag = fmt.Sprintf("pulseup-app-%s:%s", request.ServiceUID, shortSHA)
+		commitTag = fmt.Sprintf("outlap-app-%s:%s", request.ServiceUID, shortSHA)
 		if dockerService := h.services.GetDockerService(); dockerService != nil {
 			if err := dockerService.TagImage(ctx, deploymentResult.ImageName, commitTag); err != nil {
 				h.logger.Warn("Failed to tag image with commit", "source", deploymentResult.ImageName, "tag", commitTag, "error", err)

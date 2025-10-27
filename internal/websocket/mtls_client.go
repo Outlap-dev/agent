@@ -8,10 +8,10 @@ import (
 	"fmt"
 	"time"
 
-	"pulseup-agent-go/internal/config"
-	"pulseup-agent-go/internal/security"
-	"pulseup-agent-go/internal/websocket/client"
-	"pulseup-agent-go/pkg/logger"
+	"outlap-agent-go/internal/config"
+	"outlap-agent-go/internal/security"
+	"outlap-agent-go/internal/websocket/client"
+	"outlap-agent-go/pkg/logger"
 )
 
 // MTLSClient wraps the WebSocket client with mTLS certificate management

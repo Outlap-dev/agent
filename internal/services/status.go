@@ -7,8 +7,8 @@ import (
 	"sync"
 	"time"
 
-	"pulseup-agent-go/pkg/logger"
-	"pulseup-agent-go/pkg/types"
+	"outlap-agent-go/pkg/logger"
+	"outlap-agent-go/pkg/types"
 )
 
 // QueuedStatusUpdate represents a status update that was queued due to connection issues

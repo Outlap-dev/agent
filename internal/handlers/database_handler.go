@@ -1,7 +1,6 @@
 package handlers
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -13,8 +12,8 @@ import (
 	"strings"
 	"time"
 
-	"pulseup-agent-go/pkg/logger"
-	"pulseup-agent-go/pkg/types"
+	"outlap-agent-go/pkg/logger"
+	"outlap-agent-go/pkg/types"
 )
 
 // DatabaseHandler aggregates database-related commands including deployment, backups, logs, and automation.
@@ -234,7 +233,7 @@ func (h *DatabaseHandler) Logs(ctx context.Context, data json.RawMessage) (*type
 		request.Lines = 100
 	}
 
-	containerName := fmt.Sprintf("pulseup-db-%s", request.ServiceUID)
+	containerName := fmt.Sprintf("outlap-db-%s", request.ServiceUID)
 
 	dockerService := h.services.GetDockerService()
 	if dockerService == nil {
@@ -388,7 +387,7 @@ func (h *DatabaseHandler) Restore(ctx context.Context, data json.RawMessage) (*t
 	}, nil
 }
 
-// DownloadBackup uploads a backup file to the PulseUp API for safekeeping.
+// DownloadBackup uploads a backup file to the Outlap API for safekeeping.
 func (h *DatabaseHandler) DownloadBackup(ctx context.Context, data json.RawMessage) (*types.CommandResponse, error) {
 	var request DownloadBackupRequest
 	if err := json.Unmarshal(data, &request); err != nil {
@@ -553,35 +552,50 @@ func (h *DatabaseHandler) uploadBackupFile(ctx context.Context, uploadURL, backu
 		return fmt.Errorf("failed to get file info: %w", err)
 	}
 
-	var buf bytes.Buffer
-	writer := multipart.NewWriter(&buf)
+	pr, pw := io.Pipe()
+	writer := multipart.NewWriter(pw)
 
-	if err := writer.WriteField("backup_uid", backupUID); err != nil {
-		return fmt.Errorf("failed to write backup_uid field: %w", err)
-	}
-	if err := writer.WriteField("service_uid", serviceUID); err != nil {
-		return fmt.Errorf("failed to write service_uid field: %w", err)
-	}
+	go func() {
+		var streamErr error
+		defer func() {
+			if streamErr != nil {
+				_ = pw.CloseWithError(streamErr)
+				return
+			}
+			if err := writer.Close(); err != nil {
+				_ = pw.CloseWithError(err)
+				return
+			}
+			_ = pw.Close()
+		}()
 
-	part, err := writer.CreateFormFile("backup_file", filepath.Base(backupPath))
-	if err != nil {
-		return fmt.Errorf("failed to create form file: %w", err)
-	}
-	if _, err := io.Copy(part, file); err != nil {
-		return fmt.Errorf("failed to copy file content: %w", err)
-	}
+		if err := writer.WriteField("backup_uid", backupUID); err != nil {
+			streamErr = fmt.Errorf("failed to write backup_uid field: %w", err)
+			return
+		}
+		if err := writer.WriteField("service_uid", serviceUID); err != nil {
+			streamErr = fmt.Errorf("failed to write service_uid field: %w", err)
+			return
+		}
 
-	if err := writer.Close(); err != nil {
-		return fmt.Errorf("failed to close multipart writer: %w", err)
-	}
+		part, err := writer.CreateFormFile("backup_file", filepath.Base(backupPath))
+		if err != nil {
+			streamErr = fmt.Errorf("failed to create form file: %w", err)
+			return
+		}
+		if _, err := io.Copy(part, file); err != nil {
+			streamErr = fmt.Errorf("failed to copy file content: %w", err)
+			return
+		}
+	}()
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, uploadURL, &buf)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, uploadURL, pr)
 	if err != nil {
 		return fmt.Errorf("failed to create HTTP request: %w", err)
 	}
 
 	req.Header.Set("Content-Type", writer.FormDataContentType())
-	req.Header.Set("User-Agent", "PulseUp-Agent/1.0")
+	req.Header.Set("User-Agent", "Outlap-Agent/1.0")
 
 	client := &http.Client{Timeout: 30 * time.Minute}
 

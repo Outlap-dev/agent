@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"time"
 
-	"pulseup-agent-go/pkg/types"
+	"outlap-agent-go/pkg/types"
 )
 
 // WebSocketConnection represents a websocket connection interface for dependency injection

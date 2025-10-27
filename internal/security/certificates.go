@@ -15,16 +15,16 @@ import (
 	"path/filepath"
 	"time"
 
-	"pulseup-agent-go/pkg/logger"
+	"outlap-agent-go/pkg/logger"
 )
 
 // CertificateManager handles certificate storage, loading, and renewal.
 type CertificateManager struct {
-	certDir    string
-	certPath   string
-	keyPath    string
-	caPath     string
-	logger     *logger.Logger
+	certDir  string
+	certPath string
+	keyPath  string
+	caPath   string
+	logger   *logger.Logger
 }
 
 // CertPaths contains the file paths for certificates.
@@ -37,7 +37,7 @@ type CertPaths struct {
 // NewCertificateManager creates a new certificate manager.
 func NewCertificateManager(certDir string, logger *logger.Logger) *CertificateManager {
 	if certDir == "" {
-		certDir = "/var/lib/pulseup/certs"
+		certDir = "/var/lib/outlap/certs"
 	}
 
 	return &CertificateManager{
@@ -101,8 +101,8 @@ func (cm *CertificateManager) LoadCertificate() (tls.Certificate, error) {
 		return tls.Certificate{}, fmt.Errorf("certificate is expired or not yet valid")
 	}
 
-	cm.logger.Debug("Successfully loaded certificate", 
-		"not_before", x509Cert.NotBefore, 
+	cm.logger.Debug("Successfully loaded certificate",
+		"not_before", x509Cert.NotBefore,
 		"not_after", x509Cert.NotAfter,
 		"subject", x509Cert.Subject.String())
 
@@ -126,7 +126,7 @@ func (cm *CertificateManager) LoadCACertificate() (*x509.CertPool, error) {
 		cm.logger.Warn("Failed to load system cert pool, using empty pool", "error", err)
 		caCertPool = x509.NewCertPool()
 	}
-	
+
 	// Add enrollment CA on top
 	if !caCertPool.AppendCertsFromPEM(caCertPEM) {
 		return nil, fmt.Errorf("failed to parse CA certificate")
@@ -163,7 +163,7 @@ func (cm *CertificateManager) ShouldRenew() (bool, error) {
 	renewalThreshold := cert.NotBefore.Add(time.Duration(float64(lifetime) * 0.7))
 
 	shouldRenew := now.After(renewalThreshold)
-	
+
 	cm.logger.Debug("Certificate renewal check",
 		"not_before", cert.NotBefore,
 		"not_after", cert.NotAfter,
@@ -189,12 +189,12 @@ func (cm *CertificateManager) CreateCSR(privateKey ed25519.PrivateKey, serverUID
 	template := x509.CertificateRequest{
 		Subject: pkix.Name{
 			Country:            []string{"US"},
-			Organization:       []string{"PulseUp"},
-			OrganizationalUnit: []string{"PulseUp Agent"},
+			Organization:       []string{"Outlap"},
+			OrganizationalUnit: []string{"Outlap Agent"},
 			CommonName:         fmt.Sprintf("agent-%s", serverUID),
 		},
 		DNSNames: []string{
-			fmt.Sprintf("agent-%s.pulseup.local", serverUID),
+			fmt.Sprintf("agent-%s.outlap.local", serverUID),
 			serverUID,
 		},
 	}
@@ -251,31 +251,31 @@ func (cm *CertificateManager) StoreCertificate(certPEM, caCertPEM []byte, privat
 
 // Sign signs the provided data using the stored private key and returns a base64-encoded signature
 func (cm *CertificateManager) Sign(data []byte) (string, error) {
-    // Load private key from file
-    keyPEM, err := os.ReadFile(cm.keyPath)
-    if err != nil {
-        return "", fmt.Errorf("failed to read private key: %w", err)
-    }
-    block, _ := pem.Decode(keyPEM)
-    if block == nil {
-        return "", fmt.Errorf("failed to decode private key PEM")
-    }
-    privAny, err := x509.ParsePKCS8PrivateKey(block.Bytes)
-    if err != nil {
-        return "", fmt.Errorf("failed to parse private key: %w", err)
-    }
-    priv, ok := privAny.(ed25519.PrivateKey)
-    if !ok {
-        return "", fmt.Errorf("private key is not ed25519")
-    }
-    sig := ed25519.Sign(priv, data)
-    return base64.StdEncoding.EncodeToString(sig), nil
+	// Load private key from file
+	keyPEM, err := os.ReadFile(cm.keyPath)
+	if err != nil {
+		return "", fmt.Errorf("failed to read private key: %w", err)
+	}
+	block, _ := pem.Decode(keyPEM)
+	if block == nil {
+		return "", fmt.Errorf("failed to decode private key PEM")
+	}
+	privAny, err := x509.ParsePKCS8PrivateKey(block.Bytes)
+	if err != nil {
+		return "", fmt.Errorf("failed to parse private key: %w", err)
+	}
+	priv, ok := privAny.(ed25519.PrivateKey)
+	if !ok {
+		return "", fmt.Errorf("private key is not ed25519")
+	}
+	sig := ed25519.Sign(priv, data)
+	return base64.StdEncoding.EncodeToString(sig), nil
 }
 
 // RemoveCertificate removes all certificate files.
 func (cm *CertificateManager) RemoveCertificate() error {
 	files := []string{cm.certPath, cm.keyPath, cm.caPath}
-	
+
 	for _, file := range files {
 		if cm.fileExists(file) {
 			if err := os.Remove(file); err != nil {
@@ -311,12 +311,12 @@ func (cm *CertificateManager) GetCertificateInfo() (*CertificateInfo, error) {
 	}
 
 	info := &CertificateInfo{
-		Subject:     cert.Subject.String(),
-		Issuer:      cert.Issuer.String(),
+		Subject:      cert.Subject.String(),
+		Issuer:       cert.Issuer.String(),
 		SerialNumber: cert.SerialNumber.String(),
-		NotBefore:   cert.NotBefore,
-		NotAfter:    cert.NotAfter,
-		DNSNames:    cert.DNSNames,
+		NotBefore:    cert.NotBefore,
+		NotAfter:     cert.NotAfter,
+		DNSNames:     cert.DNSNames,
 	}
 
 	return info, nil
@@ -345,11 +345,11 @@ func (cm *CertificateManager) fileExists(filename string) bool {
 func (cm *CertificateManager) writeFileSecure(filename string, data []byte, perm os.FileMode) error {
 	// Write to a temporary file first, then move to prevent partial writes
 	tempFile := filename + ".tmp"
-	
+
 	if err := os.WriteFile(tempFile, data, perm); err != nil {
 		return err
 	}
-	
+
 	return os.Rename(tempFile, filename)
 }
 

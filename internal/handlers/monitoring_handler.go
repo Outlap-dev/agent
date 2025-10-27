@@ -4,8 +4,8 @@ import (
 	"context"
 	"encoding/json"
 
-	"pulseup-agent-go/pkg/logger"
-	"pulseup-agent-go/pkg/types"
+	"outlap-agent-go/pkg/logger"
+	"outlap-agent-go/pkg/types"
 )
 
 // MonitoringHandler aggregates monitoring-related command handlers (status, metrics, alerts, lifecycle).

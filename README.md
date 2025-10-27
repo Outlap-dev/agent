@@ -1,15 +1,15 @@
-# PulseUp Agent
+# Outlap Agent
 
-A high-performance, containerized agent for the PulseUp platform, rewritten from Python to Go. Uses native WebSockets for real-time communication with PulseUp servers to manage applications, databases, and infrastructure.
+A high-performance, containerized agent for the Outlap platform, rewritten from Python to Go. Uses native WebSockets for real-time communication with Outlap servers to manage applications, databases, and infrastructure.
 
 ## Architecture
 
 The Go agent follows a clean architecture pattern with the following structure:
 
 ```
-pulseup-agent/
+outlap-agent/
 ├── cmd/
-│   └── agent/           # PulseUp agent entry point
+│   └── agent/           # Outlap agent entry point
 ├── internal/
 │   ├── config/          # Configuration management  
 │   ├── worker/          # Agent service container
@@ -54,10 +54,10 @@ pulseup-agent/
 The agent supports configuration via environment variables or config files:
 
 - `.env` file (for local development)
-- `/etc/pulseup-agent/config` (for production)
+- `/etc/outlap-agent/config` (for production)
 
 Required environment variables:
-- `WEBSOCKET_URL`: WebSocket server URL (default: `ws://ws.pulseup.io/ws/agent`)
+- `WEBSOCKET_URL`: WebSocket server URL (default: `ws://ws.outlap.dev/ws/agent`)
 - `JOIN_TOKEN`: One-time enrollment token for obtaining mTLS certificates (only needed for initial enrollment)
 
 Optional auto-reconnection settings:
@@ -67,7 +67,7 @@ Optional auto-reconnection settings:
 - `RECONNECT_BACKOFF_MAX`: Maximum backoff delay in seconds (default: `60`)
 
 Database backup configuration:
-- `PULSEUP_BACKUP_DIR`: Override the default `/var/lib/pulseup/backups` directory where database backups (including MongoDB archives) are stored on the agent
+- `PULSEUP_BACKUP_DIR`: Override the default `/var/lib/outlap/backups` directory where database backups (including MongoDB archives) are stored on the agent
 
 ## Building and Running
 
@@ -90,13 +90,13 @@ docker-compose -f docker-compose.debug.yml up --build
 docker-compose down
 
 # View logs
-docker-compose logs -f pulseup-agent
+docker-compose logs -f outlap-agent
 ```
 
 #### Local Development
 ```bash
 # Build the agent locally
-go build -o pulseup-agent ./cmd/agent
+go build -o outlap-agent ./cmd/agent
 
 # Run tests
 ./test.sh
@@ -132,7 +132,7 @@ package handlers
 import (
     "context"
     "encoding/json"
-    "pulseup-agent-go/pkg/types"
+    "outlap-agent-go/pkg/types"
 )
 
 type MyHandler struct {
@@ -225,7 +225,7 @@ The agent uses structured JSON logging:
 {
     "time": "2024-01-01T12:00:00Z",
     "level": "INFO",
-    "msg": "Starting PulseUp Agent",
+    "msg": "Starting Outlap Agent",
     "component": "main"
 }
 ```
@@ -235,23 +235,23 @@ Log levels: DEBUG, INFO, WARN, ERROR
 ## Deployment
 
 ### Systemd Services
-The install script provisions two units: `pulseup-agent.service` (runs as the unprivileged agent user) and `pulseup-agent-updater.service` (a root oneshot triggered by a path unit). Templates are below for reference.
+The install script provisions two units: `outlap-agent.service` (runs as the unprivileged agent user) and `outlap-agent-updater.service` (a root oneshot triggered by a path unit). Templates are below for reference.
 
-`/etc/systemd/system/pulseup-agent.service`
+`/etc/systemd/system/outlap-agent.service`
 
 ```ini
 [Unit]
-Description=PulseUp Agent
+Description=Outlap Agent
 After=network-online.target docker.service
 Wants=network-online.target
 
 [Service]
 Type=simple
-User=pulseup
-Group=pulseup
-EnvironmentFile=/etc/pulseup-agent/config
-WorkingDirectory=/opt/pulseup
-ExecStart=/usr/local/bin/pulseup-agent
+User=outlap
+Group=outlap
+EnvironmentFile=/etc/outlap-agent/config
+WorkingDirectory=/opt/outlap
+ExecStart=/usr/local/bin/outlap-agent
 Restart=always
 RestartSec=5
 SupplementaryGroups=docker
@@ -260,19 +260,19 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=true
-ReadWritePaths=/opt/pulseup /var/lib/pulseup /var/log/pulseup /run/pulseup
-StandardOutput=append:/var/log/pulseup/agent.log
-StandardError=append:/var/log/pulseup/agent.log
+ReadWritePaths=/opt/outlap /var/lib/outlap /var/log/outlap /run/outlap
+StandardOutput=append:/var/log/outlap/agent.log
+StandardError=append:/var/log/outlap/agent.log
 
 [Install]
 WantedBy=multi-user.target
 ```
 
-`/etc/systemd/system/pulseup-agent-updater.service`
+`/etc/systemd/system/outlap-agent-updater.service`
 
 ```ini
 [Unit]
-Description=PulseUp Agent Updater
+Description=Outlap Agent Updater
 After=network-online.target
 Wants=network-online.target
 
@@ -280,34 +280,34 @@ Wants=network-online.target
 Type=oneshot
 User=root
 Group=root
-Environment="REQUEST_FILE=/run/pulseup/update.request"
-Environment="TARGET_PATH=/usr/local/bin/pulseup-agent"
-Environment="STAGING_DIR=/var/lib/pulseup"
-Environment="PUBLIC_KEY=/etc/pulseup-agent/update_public.pem"
-ExecStart=/usr/local/bin/pulseup-agent-updater
-ExecStartPost=/bin/systemctl restart pulseup-agent.service
+Environment="REQUEST_FILE=/run/outlap/update.request"
+Environment="TARGET_PATH=/usr/local/bin/outlap-agent"
+Environment="STAGING_DIR=/var/lib/outlap"
+Environment="PUBLIC_KEY=/etc/outlap-agent/update_public.pem"
+ExecStart=/usr/local/bin/outlap-agent-updater
+ExecStartPost=/bin/systemctl restart outlap-agent.service
 PrivateTmp=true
 NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true
-StandardOutput=append:/var/log/pulseup/updater.log
-StandardError=append:/var/log/pulseup/updater.log
+StandardOutput=append:/var/log/outlap/updater.log
+StandardError=append:/var/log/outlap/updater.log
 
 [Install]
 WantedBy=multi-user.target
 ```
 
-And the path unit that triggers the updater whenever `/run/pulseup/update.request` changes:
+And the path unit that triggers the updater whenever `/run/outlap/update.request` changes:
 
-`/etc/systemd/system/pulseup-agent-update.path`
+`/etc/systemd/system/outlap-agent-update.path`
 
 ```ini
 [Unit]
-Description=Trigger PulseUp agent updater when a request is received
+Description=Trigger Outlap agent updater when a request is received
 
 [Path]
-PathChanged=/run/pulseup/update.request
-Unit=pulseup-agent-updater.service
+PathChanged=/run/outlap/update.request
+Unit=outlap-agent-updater.service
 
 [Install]
 WantedBy=multi-user.target

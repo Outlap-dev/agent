@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"pulseup-agent-go/pkg/types"
+	"outlap-agent-go/pkg/types"
 )
 
 // MockWebSocketConnection implements WebSocketConnection for testing

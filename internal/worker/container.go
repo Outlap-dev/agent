@@ -5,15 +5,15 @@ import (
 	"context"
 	"fmt"
 
-	"pulseup-agent-go/internal/config"
-	"pulseup-agent-go/internal/services"
-	"pulseup-agent-go/pkg/logger"
+	"outlap-agent-go/internal/config"
+	"outlap-agent-go/internal/services"
+	"outlap-agent-go/pkg/logger"
 )
 
 // Container manages all unprivileged services in the agent process
 type Container struct {
-	config    *config.Config
-	logger    *logger.Logger
+	config *config.Config
+	logger *logger.Logger
 
 	// Service container
 	serviceContainer *services.ServiceContainer
@@ -22,8 +22,8 @@ type Container struct {
 // NewContainer creates a new agent service container
 func NewContainer(cfg *config.Config, logger *logger.Logger, _ interface{}) (*Container, error) {
 	return &Container{
-		config:    cfg,
-		logger:    logger.With("component", "agent_container"),
+		config: cfg,
+		logger: logger.With("component", "agent_container"),
 	}, nil
 }
 

@@ -7,8 +7,8 @@ import (
 	"strconv"
 	"strings"
 
-	"pulseup-agent-go/pkg/logger"
-	"pulseup-agent-go/pkg/types"
+	"outlap-agent-go/pkg/logger"
+	"outlap-agent-go/pkg/types"
 
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/go-connections/nat"

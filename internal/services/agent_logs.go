@@ -7,7 +7,7 @@ import (
 	"os/exec"
 	"strings"
 
-	"pulseup-agent-go/pkg/logger"
+	"outlap-agent-go/pkg/logger"
 )
 
 // AgentLogServiceImpl implements the AgentLogService interface
@@ -27,7 +27,7 @@ func (s *AgentLogServiceImpl) GetAgentLogs(ctx context.Context, lines int) ([]st
 	var allLogs []string
 
 	// First, try to get logs from the agent log file if it exists
-	logFilePath := "/var/log/pulseup/agent.log"
+	logFilePath := "/var/log/outlap/agent.log"
 	if _, err := os.Stat(logFilePath); err == nil {
 		fileLogs, err := s.getLogsFromFile(logFilePath, lines)
 		if err != nil {
@@ -77,7 +77,7 @@ func (s *AgentLogServiceImpl) getLogsFromFile(filePath string, maxLines int) ([]
 
 	lines := strings.Split(string(content), "\n")
 	var nonEmptyLines []string
-	
+
 	for _, line := range lines {
 		if strings.TrimSpace(line) != "" {
 			nonEmptyLines = append(nonEmptyLines, line)
@@ -88,7 +88,7 @@ func (s *AgentLogServiceImpl) getLogsFromFile(filePath string, maxLines int) ([]
 	if len(nonEmptyLines) > maxLines {
 		return nonEmptyLines[len(nonEmptyLines)-maxLines:], nil
 	}
-	
+
 	return nonEmptyLines, nil
 }
 
@@ -109,7 +109,7 @@ func (s *AgentLogServiceImpl) getLogsFromContainer(ctx context.Context, maxLines
 
 	lines := strings.Split(string(output), "\n")
 	var nonEmptyLines []string
-	
+
 	for _, line := range lines {
 		if strings.TrimSpace(line) != "" {
 			nonEmptyLines = append(nonEmptyLines, line)
@@ -161,12 +161,12 @@ func (s *AgentLogServiceImpl) getCurrentContainerID() (string, error) {
 
 // getLogsFromJournalctl attempts to get logs from systemd journal
 func (s *AgentLogServiceImpl) getLogsFromJournalctl(ctx context.Context, maxLines int) ([]string, error) {
-	// Try to get logs for pulseup-agent service
-	cmd := exec.CommandContext(ctx, "journalctl", "-u", "pulseup-agent", "--no-pager", "-n", fmt.Sprintf("%d", maxLines))
+	// Try to get logs for outlap-agent service
+	cmd := exec.CommandContext(ctx, "journalctl", "-u", "outlap-agent", "--no-pager", "-n", fmt.Sprintf("%d", maxLines))
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		// If specific service doesn't exist, try to get recent logs with pulseup in them
-		cmd = exec.CommandContext(ctx, "journalctl", "--no-pager", "-n", fmt.Sprintf("%d", maxLines*2), "--grep", "pulseup")
+		// If specific service doesn't exist, try to get recent logs with outlap in them
+		cmd = exec.CommandContext(ctx, "journalctl", "--no-pager", "-n", fmt.Sprintf("%d", maxLines*2), "--grep", "outlap")
 		output, err = cmd.CombinedOutput()
 		if err != nil {
 			return nil, fmt.Errorf("failed to get journalctl logs: %w", err)
@@ -175,7 +175,7 @@ func (s *AgentLogServiceImpl) getLogsFromJournalctl(ctx context.Context, maxLine
 
 	lines := strings.Split(string(output), "\n")
 	var nonEmptyLines []string
-	
+
 	for _, line := range lines {
 		if strings.TrimSpace(line) != "" {
 			nonEmptyLines = append(nonEmptyLines, line)

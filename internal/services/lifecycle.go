@@ -9,15 +9,15 @@ import (
 	"strings"
 	"time"
 
-	"pulseup-agent-go/pkg/logger"
-	"pulseup-agent-go/pkg/types"
+	"outlap-agent-go/pkg/logger"
+	"outlap-agent-go/pkg/types"
 )
 
 const (
-	lifecycleVersionLabel   = "pulseup.lifecycle.version"
-	lifecycleFinalNameLabel = "pulseup.lifecycle.final_name"
-	managedLabelKey         = "pulseup.managed"
-	serviceUIDLabelKey      = "pulseup.service_uid"
+	lifecycleVersionLabel   = "outlap.lifecycle.version"
+	lifecycleFinalNameLabel = "outlap.lifecycle.final_name"
+	managedLabelKey         = "outlap.managed"
+	serviceUIDLabelKey      = "outlap.service_uid"
 )
 
 var versionSuffixPattern = regexp.MustCompile(`(?i)-v(\d+)`)
@@ -137,15 +137,15 @@ func (s *ContainerLifecycleService) PlanDeployment(ctx context.Context, serviceU
 	}
 
 	nextVersion := highestVersion + 1
-	candidateName := fmt.Sprintf("pulseup-app-%s-v%04d-candidate", serviceUID, nextVersion)
-	finalName := fmt.Sprintf("pulseup-app-%s-v%04d", serviceUID, nextVersion)
+	candidateName := fmt.Sprintf("outlap-app-%s-v%04d-candidate", serviceUID, nextVersion)
+	finalName := fmt.Sprintf("outlap-app-%s-v%04d", serviceUID, nextVersion)
 
 	labels := map[string]string{
-		serviceUIDLabelKey:       serviceUID,
-		"pulseup.deployment_uid": deploymentUID,
-		lifecycleVersionLabel:    strconv.Itoa(nextVersion),
-		lifecycleFinalNameLabel:  finalName,
-		managedLabelKey:          "true",
+		serviceUIDLabelKey:      serviceUID,
+		"outlap.deployment_uid": deploymentUID,
+		lifecycleVersionLabel:   strconv.Itoa(nextVersion),
+		lifecycleFinalNameLabel: finalName,
+		managedLabelKey:         "true",
 	}
 
 	plan := &DeploymentPlan{

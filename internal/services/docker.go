@@ -16,8 +16,8 @@ import (
 	"github.com/docker/docker/client"
 	"github.com/docker/docker/errdefs"
 
-	"pulseup-agent-go/pkg/logger"
-	pulseuptypes "pulseup-agent-go/pkg/types"
+	"outlap-agent-go/pkg/logger"
+	pulseuptypes "outlap-agent-go/pkg/types"
 )
 
 // DockerStats represents the structure returned by Docker stats API

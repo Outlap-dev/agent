@@ -3,12 +3,12 @@ package bootstrap
 import (
 	"strings"
 
-	"pulseup-agent-go/internal/config"
-	"pulseup-agent-go/internal/handlers"
-	"pulseup-agent-go/internal/security"
-	"pulseup-agent-go/internal/websocket"
-	wsbootstrap "pulseup-agent-go/internal/websocket/bootstrap"
-	"pulseup-agent-go/pkg/logger"
+	"outlap-agent-go/internal/config"
+	"outlap-agent-go/internal/handlers"
+	"outlap-agent-go/internal/security"
+	"outlap-agent-go/internal/websocket"
+	wsbootstrap "outlap-agent-go/internal/websocket/bootstrap"
+	"outlap-agent-go/pkg/logger"
 )
 
 // RuntimeEnvironment captures shared runtime dependencies that multiple services rely on.

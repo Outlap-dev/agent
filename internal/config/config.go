@@ -40,7 +40,6 @@ type Config struct {
 	UpdateEnabled       bool
 	UpdateAutoApply     bool
 	UpdateIntervalHours int
-	UpdateURL           string
 	UpdatePublicKeyPath string
 	UpdateRepository    string
 	UpdateRequestPath   string
@@ -63,8 +62,8 @@ func Load() (*Config, error) {
 		ReconnectDelay:               getEnvInt("RECONNECT_DELAY", 5),
 		MaxReconnects:                getEnvInt("MAX_RECONNECTS", 10),
 		EnableCaddy:                  getEnvBool("ENABLE_CADDY", true),
-		CaddyConfigDir:               getEnv("CADDY_CONFIG_DIR", "/etc/pulseup-agent/caddy"),
-		CaddyDataDir:                 getEnv("CADDY_DATA_DIR", "/etc/pulseup-agent/caddy/data"),
+		CaddyConfigDir:               getEnv("CADDY_CONFIG_DIR", "/etc/outlap-agent/caddy"),
+		CaddyDataDir:                 getEnv("CADDY_DATA_DIR", "/etc/outlap-agent/caddy/data"),
 		ReconnectEnabled:             getEnvBool("RECONNECT_ENABLED", true),
 		ReconnectMaxAttempts:         getEnvInt("RECONNECT_MAX_ATTEMPTS", 10),
 		ReconnectInterval:            getEnvInt("RECONNECT_INTERVAL", 5),
@@ -74,15 +73,14 @@ func Load() (*Config, error) {
 		UpdateEnabled:                getEnvBool("UPDATE_ENABLED", false),                // Disabled by default for safety
 		UpdateAutoApply:              getEnvBool("UPDATE_AUTO_APPLY", false),
 		UpdateIntervalHours:          getEnvInt("UPDATE_INTERVAL_HOURS", 6),
-		UpdateURL:                    getEnv("UPDATE_URL", "https://updates.pulseup.io/agent/releases/latest.json"),
-		UpdatePublicKeyPath:          getEnv("UPDATE_PUBLIC_KEY_PATH", "/etc/pulseup-agent/update_public.pem"),
+		UpdatePublicKeyPath:          getEnv("UPDATE_PUBLIC_KEY_PATH", "/etc/outlap-agent/update_public.pem"),
 		UpdateRepository:             resolveUpdateRepository(),
-		UpdateRequestPath:            getEnv("UPDATE_REQUEST_PATH", "/run/pulseup/update.request"),
+		UpdateRequestPath:            getEnv("UPDATE_REQUEST_PATH", "/run/outlap/update.request"),
 
 		// mTLS and enrollment configuration
-		CertDir:     getEnv("CERT_DIR", "/var/lib/pulseup/certs"),
+		CertDir:     getEnv("CERT_DIR", "/var/lib/outlap/certs"),
 		JoinToken:   getEnv("JOIN_TOKEN", ""),
-		SocketGroup: getEnv("PULSEUP_AGENT_GROUP", "pulseup"),
+		SocketGroup: getEnv("PULSEUP_AGENT_GROUP", "outlap"),
 	}
 
 	// Validate required fields
@@ -193,7 +191,7 @@ func resolveUpdateRepository() string {
 	if legacy := os.Getenv("VERSION_CHECK_REPO"); legacy != "" {
 		return legacy
 	}
-	return "PulseUp-IO/pulseup-agent"
+	return "Outlap-dev/agent"
 }
 
 func getEnv(key, defaultValue string) string {
