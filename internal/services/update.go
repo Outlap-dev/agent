@@ -244,20 +244,30 @@ func (s *updateService) triggerSystemdUpdate(ctx context.Context, metadata *type
 		return fmt.Errorf("failed to create staging directory: %w", err)
 	}
 
-	// Extract archive
-	if err := s.extractArchive(filePath, stagingDir); err != nil {
-		return fmt.Errorf("failed to extract update: %w", err)
-	}
-
-	newBinary := filepath.Join(stagingDir, "outlap-agent")
-	if _, err := os.Stat(newBinary); err != nil {
-		return fmt.Errorf("new binary not found in archive: %w", err)
-	}
-
-	// Move binary to staging location expected by updater
 	stagingBinary := filepath.Join(stagingDir, "outlap-agent.new")
-	if err := os.Rename(newBinary, stagingBinary); err != nil {
-		return fmt.Errorf("failed to move binary to staging: %w", err)
+
+	isArchive, err := isGzipArchive(filePath)
+	if err != nil {
+		return fmt.Errorf("failed to inspect update payload: %w", err)
+	}
+
+	if isArchive {
+		if err := s.extractArchive(filePath, stagingDir); err != nil {
+			return fmt.Errorf("failed to extract update: %w", err)
+		}
+
+		newBinary := filepath.Join(stagingDir, "outlap-agent")
+		if _, err := os.Stat(newBinary); err != nil {
+			return fmt.Errorf("new binary not found in archive: %w", err)
+		}
+
+		if err := os.Rename(newBinary, stagingBinary); err != nil {
+			return fmt.Errorf("failed to move binary to staging: %w", err)
+		}
+	} else {
+		if err := copyFile(filePath, stagingBinary); err != nil {
+			return fmt.Errorf("failed to stage update binary: %w", err)
+		}
 	}
 
 	if err := os.Chmod(stagingBinary, 0755); err != nil {
@@ -467,6 +477,43 @@ func (s *updateService) extractArchive(archivePath, destDir string) error {
 	}
 
 	return nil
+}
+
+func isGzipArchive(path string) (bool, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return false, err
+	}
+	defer f.Close()
+
+	var magic [2]byte
+	n, err := f.Read(magic[:])
+	if err != nil && err != io.EOF {
+		return false, err
+	}
+	return n == 2 && magic[0] == 0x1f && magic[1] == 0x8b, nil
+}
+
+func copyFile(src, dst string) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+
+	out, err := os.Create(dst)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		_ = out.Close()
+	}()
+
+	if _, err := io.Copy(out, in); err != nil {
+		return err
+	}
+
+	return out.Sync()
 }
 
 // fetchBackendManifest fetches the update manifest from the backend endpoint
