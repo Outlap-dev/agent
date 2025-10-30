@@ -817,8 +817,7 @@ type UpdateApplyOptions struct {
 
 // UpdateConfig represents configuration for agent updates
 type UpdateConfig struct {
-	Enabled             bool   `json:"enabled"`
-	AutoUpdate          bool   `json:"auto_update"`
-	UpdateIntervalHours int    `json:"update_interval_hours"`
-	PublicKeyPath       string `json:"public_key_path"`
+	Enabled             bool `json:"enabled"`
+	AutoUpdate          bool `json:"auto_update"`
+	UpdateIntervalHours int  `json:"update_interval_hours"`
 }

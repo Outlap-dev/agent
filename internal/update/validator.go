@@ -20,69 +20,39 @@ MCowBQYDK2VwAyEAw5rJ14PFubDpz7fx67APlspgH5S3GRTVUohhq2zTqc0=
 -----END PUBLIC KEY-----`
 
 type Validator struct {
-	publicKeyPath string
-	publicKey     crypto.PublicKey
+	publicKey crypto.PublicKey
 }
 
-func NewValidator(publicKeyPath string) (*Validator, error) {
-	v := &Validator{
-		publicKeyPath: publicKeyPath,
-	}
-
-	// Try to load public key from file first
-	if publicKeyPath != "" {
-		if err := v.loadPublicKeyFromFile(); err != nil {
-			// If file doesn't exist, use embedded key
-			if !os.IsNotExist(err) {
-				return nil, fmt.Errorf("failed to load public key from file: %w", err)
-			}
-		}
-	}
-
-	// If no key loaded from file, use embedded key
-	if v.publicKey == nil {
-		if err := v.loadEmbeddedPublicKey(); err != nil {
-			return nil, fmt.Errorf("failed to load embedded public key: %w", err)
-		}
-	}
-
-	return v, nil
-}
-
-func (v *Validator) loadPublicKeyFromFile() error {
-	keyData, err := os.ReadFile(v.publicKeyPath)
+func NewValidator() (*Validator, error) {
+	publicKey, err := parsePublicKey([]byte(EmbeddedPublicKey))
 	if err != nil {
-		return err
+		return nil, fmt.Errorf("failed to load embedded public key: %w", err)
 	}
 
-	return v.parsePublicKey(keyData)
+	return &Validator{
+		publicKey: publicKey,
+	}, nil
 }
 
-func (v *Validator) loadEmbeddedPublicKey() error {
-	return v.parsePublicKey([]byte(EmbeddedPublicKey))
-}
-
-func (v *Validator) parsePublicKey(keyData []byte) error {
+func parsePublicKey(keyData []byte) (crypto.PublicKey, error) {
 	block, _ := pem.Decode(keyData)
 	if block == nil {
-		return fmt.Errorf("failed to parse PEM block")
+		return nil, fmt.Errorf("failed to parse PEM block")
 	}
 
 	parsed, err := x509.ParsePKIXPublicKey(block.Bytes)
 	if err != nil {
-		return fmt.Errorf("failed to parse public key: %w", err)
+		return nil, fmt.Errorf("failed to parse public key: %w", err)
 	}
 
 	switch key := parsed.(type) {
 	case *rsa.PublicKey:
-		v.publicKey = key
+		return key, nil
 	case ed25519.PublicKey:
-		v.publicKey = key
+		return key, nil
 	default:
-		return fmt.Errorf("unsupported public key type: %T", parsed)
+		return nil, fmt.Errorf("unsupported public key type: %T", parsed)
 	}
-
-	return nil
 }
 
 // VerifySignature verifies the signature of the update metadata

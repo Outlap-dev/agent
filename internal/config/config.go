@@ -40,7 +40,6 @@ type Config struct {
 	UpdateEnabled       bool
 	UpdateAutoApply     bool
 	UpdateIntervalHours int
-	UpdatePublicKeyPath string
 	UpdateRepository    string
 	UpdateRequestPath   string
 
@@ -73,7 +72,6 @@ func Load() (*Config, error) {
 		UpdateEnabled:                getEnvBool("UPDATE_ENABLED", false),                // Disabled by default for safety
 		UpdateAutoApply:              getEnvBool("UPDATE_AUTO_APPLY", false),
 		UpdateIntervalHours:          getEnvInt("UPDATE_INTERVAL_HOURS", 0),
-		UpdatePublicKeyPath:          getEnv("UPDATE_PUBLIC_KEY_PATH", "/etc/outlap-agent/update_public.pem"),
 		UpdateRepository:             resolveUpdateRepository(),
 		UpdateRequestPath:            getEnv("UPDATE_REQUEST_PATH", "/run/outlap/update.request"),
 

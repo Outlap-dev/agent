@@ -283,7 +283,6 @@ Group=root
 Environment="REQUEST_FILE=/run/outlap/update.request"
 Environment="TARGET_PATH=/usr/local/bin/outlap-agent"
 Environment="STAGING_DIR=/var/lib/outlap"
-Environment="PUBLIC_KEY=/etc/outlap-agent/update_public.pem"
 ExecStart=/usr/local/bin/outlap-agent-updater
 ExecStartPost=/bin/systemctl restart outlap-agent.service
 PrivateTmp=true

@@ -35,9 +35,8 @@ type updateService struct {
 	lastETag         string // ETag from backend manifest for caching
 }
 
-
 func NewUpdateService(cfg *config.Config, logger *logger.Logger, commandService CommandService) UpdateService {
-	validator, err := update.NewValidator(cfg.UpdatePublicKeyPath)
+	validator, err := update.NewValidator()
 	if err != nil {
 		logger.Error("Failed to initialize update validator", "error", err)
 	}
@@ -53,8 +52,8 @@ func NewUpdateService(cfg *config.Config, logger *logger.Logger, commandService 
 		httpClient: &http.Client{
 			Timeout: 30 * time.Second,
 		},
-		validator:  validator,
-		rand:       rand.New(rand.NewSource(time.Now().UnixNano())),
+		validator: validator,
+		rand:      rand.New(rand.NewSource(time.Now().UnixNano())),
 	}
 }
 
@@ -63,7 +62,7 @@ func (s *updateService) CheckForUpdate(ctx context.Context) (*types.UpdateMetada
 	if s.config.APIBaseURL == "" {
 		return nil, fmt.Errorf("API base URL not configured")
 	}
-	
+
 	manifestURL := s.config.APIBaseURL + "/api/agent/updates/manifest"
 	return s.checkForUpdateFromBackend(ctx, manifestURL)
 }
@@ -104,7 +103,7 @@ func (s *updateService) ensureValidator() (*update.Validator, error) {
 		return s.validator, nil
 	}
 
-	validator, err := update.NewValidator(s.config.UpdatePublicKeyPath)
+	validator, err := update.NewValidator()
 	if err != nil {
 		return nil, err
 	}
@@ -120,7 +119,6 @@ func (s *updateService) decorateRequest(req *http.Request, accept string) {
 	req.Header.Set("Accept", accept)
 	req.Header.Set("User-Agent", fmt.Sprintf("Outlap-Agent-Go/%s", config.GetVersionString()))
 }
-
 
 func (s *updateService) DownloadUpdate(ctx context.Context, metadata *types.UpdateMetadata) (string, error) {
 	if metadata == nil {
@@ -355,9 +353,9 @@ func (s *updateService) runAutoUpdateLoop(ctx context.Context, stop <-chan struc
 func (s *updateService) computeNextInterval() time.Duration {
 	intervalHours := s.config.UpdateIntervalHours
 	if intervalHours <= 0 {
-		// Backend polling: 5-10 minutes with jitter
-		base := 7 * time.Minute         // 7 minutes base
-		jitterWindow := 3 * time.Minute // ±3 minutes jitter (5-10 minute range)
+		// Backend polling: 3-5 minutes with jitter
+		base := 4 * time.Minute         // 4 minutes base
+		jitterWindow := 1 * time.Minute // ±1 minute jitter (3-5 minute range)
 
 		var jitter time.Duration
 		if s.rand != nil {
@@ -544,7 +542,7 @@ func (s *updateService) fetchBackendManifest(ctx context.Context, manifestURL st
 		SHA256:           checksum,
 		Signature:        signature,
 		ChecksumManifest: manifestContent, // Use full manifest content as signed by release pipeline
-		Changelog:        "",             // Not provided by backend manifest
+		Changelog:        "",              // Not provided by backend manifest
 	}
 
 	return metadata, nil
