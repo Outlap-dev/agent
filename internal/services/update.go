@@ -789,10 +789,8 @@ func (s *updateService) fetchBackendManifest(ctx context.Context) (*types.Update
 
 	// Parse response
 	var backendManifest struct {
-		Version     string `json:"version"`
-		ArtifactURL string `json:"artifact_url"`
-		SHA256      string `json:"sha256"`
-		Signature   string `json:"sig"`
+		Version string `json:"version"`
+		BaseURL string `json:"base_url"`
 	}
 
 	if err := json.NewDecoder(resp.Body).Decode(&backendManifest); err != nil {
@@ -800,22 +798,97 @@ func (s *updateService) fetchBackendManifest(ctx context.Context) (*types.Update
 	}
 
 	// Validate required fields
-	if backendManifest.Version == "" || backendManifest.ArtifactURL == "" || backendManifest.SHA256 == "" || backendManifest.Signature == "" {
+	if backendManifest.Version == "" || backendManifest.BaseURL == "" {
 		return nil, fmt.Errorf("backend manifest missing required fields")
 	}
 
-	// Create a checksum manifest for verification (this matches what was signed)
-	checksumManifest := fmt.Sprintf("%s  outlap-agent_%s_%s\n", backendManifest.SHA256, runtime.GOOS, runtime.GOARCH)
+	// Construct platform-specific URLs
+	// Example: {base_url}/outlap-agent_linux_amd64
+	platform := fmt.Sprintf("%s_%s", runtime.GOOS, runtime.GOARCH)
+	binaryURL := fmt.Sprintf("%s/outlap-agent_%s", backendManifest.BaseURL, platform)
+	checksumURL := fmt.Sprintf("%s/outlap-agent_%s.sha256", backendManifest.BaseURL, platform)
+	signatureURL := fmt.Sprintf("%s/outlap-agent_%s.sha256.sig", backendManifest.BaseURL, platform)
+
+	s.logger.Info("Fetching update assets from backend-provided URLs",
+		"version", backendManifest.Version,
+		"binary_url", binaryURL)
+
+	// Download and parse checksum and signature files
+	checksum, signature, err := s.fetchChecksumAndSignature(ctx, checksumURL, signatureURL)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch checksum/signature: %w", err)
+	}
 
 	// Convert to internal metadata format
 	metadata := &types.UpdateMetadata{
 		Version:          backendManifest.Version,
-		DownloadURL:      backendManifest.ArtifactURL,
-		SHA256:           backendManifest.SHA256,
-		Signature:        backendManifest.Signature,
-		ChecksumManifest: checksumManifest, // Use reconstructed manifest for verification
-		Changelog:        "",               // Not provided by backend manifest
+		DownloadURL:      binaryURL,
+		SHA256:           checksum,
+		Signature:        signature,
+		ChecksumManifest: fmt.Sprintf("%s  outlap-agent_%s\n", checksum, platform), // Reconstruct for validation
+		Changelog:        "", // Not provided by backend manifest
 	}
 
 	return metadata, nil
+}
+
+// fetchChecksumAndSignature downloads and parses the platform-specific checksum and signature files
+func (s *updateService) fetchChecksumAndSignature(ctx context.Context, checksumURL, signatureURL string) (string, string, error) {
+	// Fetch checksum file
+	checksumReq, err := http.NewRequestWithContext(ctx, http.MethodGet, checksumURL, nil)
+	if err != nil {
+		return "", "", fmt.Errorf("failed to create checksum request: %w", err)
+	}
+	s.decorateRequest(checksumReq, "")
+
+	checksumResp, err := s.httpClient.Do(checksumReq)
+	if err != nil {
+		return "", "", fmt.Errorf("failed to fetch checksum: %w", err)
+	}
+	defer checksumResp.Body.Close()
+
+	if checksumResp.StatusCode != http.StatusOK {
+		return "", "", fmt.Errorf("checksum download returned status %d", checksumResp.StatusCode)
+	}
+
+	// Read checksum file (small file, ~91 bytes)
+	checksumBytes, err := io.ReadAll(checksumResp.Body)
+	if err != nil {
+		return "", "", fmt.Errorf("failed to read checksum: %w", err)
+	}
+
+	// Parse checksum (format: "hash  filename" or just "hash")
+	checksumStr := strings.TrimSpace(string(checksumBytes))
+	checksumFields := strings.Fields(checksumStr)
+	if len(checksumFields) == 0 {
+		return "", "", fmt.Errorf("invalid checksum format")
+	}
+	checksum := checksumFields[0]
+
+	// Fetch signature file
+	sigReq, err := http.NewRequestWithContext(ctx, http.MethodGet, signatureURL, nil)
+	if err != nil {
+		return "", "", fmt.Errorf("failed to create signature request: %w", err)
+	}
+	s.decorateRequest(sigReq, "")
+
+	sigResp, err := s.httpClient.Do(sigReq)
+	if err != nil {
+		return "", "", fmt.Errorf("failed to fetch signature: %w", err)
+	}
+	defer sigResp.Body.Close()
+
+	if sigResp.StatusCode != http.StatusOK {
+		return "", "", fmt.Errorf("signature download returned status %d", sigResp.StatusCode)
+	}
+
+	// Read signature file (small file, ~88 bytes)
+	signatureBytes, err := io.ReadAll(sigResp.Body)
+	if err != nil {
+		return "", "", fmt.Errorf("failed to read signature: %w", err)
+	}
+
+	signature := strings.TrimSpace(string(signatureBytes))
+
+	return checksum, signature, nil
 }
