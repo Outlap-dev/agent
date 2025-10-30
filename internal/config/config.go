@@ -43,6 +43,7 @@ type Config struct {
 	UpdatePublicKeyPath string
 	UpdateRepository    string
 	UpdateRequestPath   string
+	UpdateManifestURL   string
 
 	// mTLS and enrollment configuration
 	CertDir     string
@@ -72,10 +73,11 @@ func Load() (*Config, error) {
 		AuthPermanentFailureCooldown: getEnvInt("AUTH_PERMANENT_FAILURE_COOLDOWN", 3600), // 1 hour
 		UpdateEnabled:                getEnvBool("UPDATE_ENABLED", false),                // Disabled by default for safety
 		UpdateAutoApply:              getEnvBool("UPDATE_AUTO_APPLY", false),
-		UpdateIntervalHours:          getEnvInt("UPDATE_INTERVAL_HOURS", 6),
+		UpdateIntervalHours:          getEnvInt("UPDATE_INTERVAL_HOURS", 0),
 		UpdatePublicKeyPath:          getEnv("UPDATE_PUBLIC_KEY_PATH", "/etc/outlap-agent/update_public.pem"),
 		UpdateRepository:             resolveUpdateRepository(),
 		UpdateRequestPath:            getEnv("UPDATE_REQUEST_PATH", "/run/outlap/update.request"),
+		UpdateManifestURL:            getEnv("UPDATE_MANIFEST_URL", ""),
 
 		// mTLS and enrollment configuration
 		CertDir:     getEnv("CERT_DIR", "/var/lib/outlap/certs"),

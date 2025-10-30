@@ -36,6 +36,7 @@ type updateService struct {
 	loopMu           sync.Mutex
 	stopChan         chan struct{}
 	updateInProgress bool
+	lastETag         string // ETag from backend manifest for caching
 }
 
 const githubAPIBase = "https://api.github.com"
@@ -93,12 +94,49 @@ func NewUpdateService(cfg *config.Config, logger *logger.Logger, commandService 
 }
 
 func (s *updateService) CheckForUpdate(ctx context.Context) (*types.UpdateMetadata, error) {
+	// If backend manifest URL is configured, use it instead of GitHub
+	if s.config.UpdateManifestURL != "" {
+		return s.checkForUpdateFromBackend(ctx)
+	}
+
+	// Fall back to GitHub direct access (legacy method)
+	return s.checkForUpdateFromGitHub(ctx)
+}
+
+// checkForUpdateFromBackend checks for updates using the backend manifest endpoint
+func (s *updateService) checkForUpdateFromBackend(ctx context.Context) (*types.UpdateMetadata, error) {
+	currentVersion := update.GetCurrentVersion()
+	s.logger.Info("Checking for updates from backend", "current", currentVersion.String(), "url", s.config.UpdateManifestURL)
+
+	metadata, err := s.fetchBackendManifest(ctx)
+	if err != nil {
+		s.logger.Error("Failed to fetch update manifest from backend", "error", err)
+		return nil, err
+	}
+
+	// Parse latest version
+	latestVersion, err := update.ParseVersion(metadata.Version)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse latest version '%s': %w", metadata.Version, err)
+	}
+
+	if !currentVersion.LessThan(latestVersion) {
+		s.logger.Info("Agent is up to date", "current", currentVersion.String(), "latest", latestVersion.String())
+		return nil, nil
+	}
+
+	s.logger.Info("Update available", "current", currentVersion.String(), "latest", latestVersion.String())
+	return metadata, nil
+}
+
+// checkForUpdateFromGitHub checks for updates using GitHub directly (legacy method)
+func (s *updateService) checkForUpdateFromGitHub(ctx context.Context) (*types.UpdateMetadata, error) {
 	if s.repoOwner == "" || s.repoName == "" {
 		return nil, fmt.Errorf("update repository not configured")
 	}
 
 	currentVersion := update.GetCurrentVersion()
-	s.logger.Info("Checking for updates", "current", currentVersion.String())
+	s.logger.Info("Checking for updates from GitHub", "current", currentVersion.String())
 
 	latestTag, err := s.fetchLatestTag(ctx)
 	if err != nil {
@@ -210,6 +248,7 @@ func (s *updateService) prepareUpdateMetadata(ctx context.Context, tag string, l
 	if err != nil {
 		return nil, fmt.Errorf("failed to download checksum manifest: %w", err)
 	}
+	originalManifest := manifest
 	manifest = strings.TrimSpace(manifest)
 	if manifest == "" {
 		return nil, fmt.Errorf("checksum manifest is empty")
@@ -229,7 +268,7 @@ func (s *updateService) prepareUpdateMetadata(ctx context.Context, tag string, l
 		return nil, fmt.Errorf("failed to initialize validator: %w", err)
 	}
 
-	if err := validator.VerifySignature([]byte(manifest), signature); err != nil {
+	if err := validator.VerifySignature([]byte(originalManifest), signature); err != nil {
 		return nil, fmt.Errorf("checksum signature verification failed: %w", err)
 	}
 
@@ -243,7 +282,7 @@ func (s *updateService) prepareUpdateMetadata(ctx context.Context, tag string, l
 		DownloadURL:      binaryAsset.BrowserDownloadURL,
 		SHA256:           checksum,
 		Signature:        signature,
-		ChecksumManifest: manifest,
+		ChecksumManifest: originalManifest,
 		Changelog:        release.Body,
 	}
 
@@ -592,7 +631,25 @@ func (s *updateService) runAutoUpdateLoop(ctx context.Context, stop <-chan struc
 func (s *updateService) computeNextInterval() time.Duration {
 	intervalHours := s.config.UpdateIntervalHours
 	if intervalHours <= 0 {
-		intervalHours = 6
+		// Use different defaults for backend vs GitHub polling
+		if s.config.UpdateManifestURL != "" {
+			// Backend polling: 5-10 minutes with jitter
+			base := 7 * time.Minute         // 7 minutes base
+			jitterWindow := 3 * time.Minute // ±3 minutes jitter (5-10 minute range)
+
+			var jitter time.Duration
+			if s.rand != nil {
+				rangeN := int64(jitterWindow * 2)
+				if rangeN > 0 {
+					jitter = time.Duration(s.rand.Int63n(rangeN)) - jitterWindow
+				}
+			}
+
+			return base + jitter
+		} else {
+			// GitHub polling: 5 minutes minimum to avoid rate limits
+			return 5 * time.Minute
+		}
 	}
 
 	base := time.Duration(intervalHours) * time.Hour
@@ -696,42 +753,69 @@ func (s *updateService) extractArchive(archivePath, destDir string) error {
 	return nil
 }
 
-func (s *updateService) copyFile(src, dst string) error {
-	sourceFile, err := os.Open(src)
+// fetchBackendManifest fetches the update manifest from the backend endpoint
+func (s *updateService) fetchBackendManifest(ctx context.Context) (*types.UpdateMetadata, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, s.config.UpdateManifestURL, nil)
 	if err != nil {
-		return err
+		return nil, fmt.Errorf("failed to create backend manifest request: %w", err)
 	}
-	defer sourceFile.Close()
 
-	destFile, err := os.Create(dst)
+	// Add caching headers
+	if s.lastETag != "" {
+		req.Header.Set("If-None-Match", s.lastETag)
+	}
+	req.Header.Set("User-Agent", fmt.Sprintf("Outlap-Agent-Go/%s", config.GetVersionString()))
+
+	resp, err := s.httpClient.Do(req)
 	if err != nil {
-		return err
+		return nil, fmt.Errorf("failed to fetch backend manifest: %w", err)
 	}
-	defer destFile.Close()
+	defer resp.Body.Close()
 
-	if _, err := io.Copy(destFile, sourceFile); err != nil {
-		return err
-	}
-
-	// Copy file permissions
-	sourceInfo, err := os.Stat(src)
-	if err != nil {
-		return err
-	}
-
-	return os.Chmod(dst, sourceInfo.Mode())
-}
-
-func (s *updateService) replaceFile(src, dst string) error {
-	// On Unix systems, we can use rename which is atomic
-	if runtime.GOOS != "windows" {
-		return os.Rename(src, dst)
+	switch resp.StatusCode {
+	case http.StatusNotModified:
+		// No changes, cached data is still valid
+		s.logger.Debug("Backend manifest unchanged")
+		return nil, nil
+	case http.StatusOK:
+		// New data available
+		break
+	default:
+		return nil, fmt.Errorf("backend manifest returned status %d", resp.StatusCode)
 	}
 
-	// On Windows, we need to remove the destination first
-	if err := os.Remove(dst); err != nil && !os.IsNotExist(err) {
-		return err
+	// Store ETag for future requests
+	s.lastETag = resp.Header.Get("ETag")
+
+	// Parse response
+	var backendManifest struct {
+		Version     string `json:"version"`
+		ArtifactURL string `json:"artifact_url"`
+		SHA256      string `json:"sha256"`
+		Signature   string `json:"sig"`
 	}
 
-	return os.Rename(src, dst)
+	if err := json.NewDecoder(resp.Body).Decode(&backendManifest); err != nil {
+		return nil, fmt.Errorf("failed to decode backend manifest: %w", err)
+	}
+
+	// Validate required fields
+	if backendManifest.Version == "" || backendManifest.ArtifactURL == "" || backendManifest.SHA256 == "" || backendManifest.Signature == "" {
+		return nil, fmt.Errorf("backend manifest missing required fields")
+	}
+
+	// Create a checksum manifest for verification (this matches what was signed)
+	checksumManifest := fmt.Sprintf("%s  outlap-agent_%s_%s\n", backendManifest.SHA256, runtime.GOOS, runtime.GOARCH)
+
+	// Convert to internal metadata format
+	metadata := &types.UpdateMetadata{
+		Version:          backendManifest.Version,
+		DownloadURL:      backendManifest.ArtifactURL,
+		SHA256:           backendManifest.SHA256,
+		Signature:        backendManifest.Signature,
+		ChecksumManifest: checksumManifest, // Use reconstructed manifest for verification
+		Changelog:        "",               // Not provided by backend manifest
+	}
+
+	return metadata, nil
 }
