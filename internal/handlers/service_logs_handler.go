@@ -116,7 +116,6 @@ func (h *ServiceLogsHandler) Fetch(ctx context.Context, data json.RawMessage) (*
 			}, nil
 		}
 
-		h.logger.Info("Using latest container for historical logs", "service_uid", request.ServiceUID, "container", activeContainer.Name, "state", activeContainer.State)
 	}
 
 	containerName := activeContainer.Name
