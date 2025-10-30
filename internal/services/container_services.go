@@ -108,6 +108,9 @@ func newServiceBundle(cfg *config.Config, baseLogger *logger.Logger, wsManager W
 	bundle.updateImpl = NewUpdateService(cfg, baseLogger, bundle.commandService).(*updateService)
 	bundle.updateService = bundle.updateImpl
 
+	// Set update service on command service after both are created (avoid circular dependency)
+	bundle.commandImpl.SetUpdateService(bundle.updateService)
+
 	bundle.agentLogService = NewAgentLogService(baseLogger)
 
 	return bundle

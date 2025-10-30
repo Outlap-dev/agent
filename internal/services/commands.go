@@ -15,6 +15,7 @@ type commandService struct {
 	logger          *logger.Logger
 	dockerService   DockerService
 	systemService   SystemService
+	updateService   UpdateService
 	whitelistedCmds map[string]types.WhitelistedCommand
 	executor        *runtime.Executor
 	osInfo          *runtime.OSInfo
@@ -30,6 +31,11 @@ func NewCommandService(logger *logger.Logger, dockerService DockerService, syste
 	}
 	cs.initializeWhitelistedCommands()
 	return cs
+}
+
+// SetUpdateService sets the update service (called after creation to avoid circular dependency)
+func (cs *commandService) SetUpdateService(updateService UpdateService) {
+	cs.updateService = updateService
 }
 
 func (cs *commandService) initializeWhitelistedCommands() {
@@ -156,10 +162,43 @@ func (cs *commandService) initializeWhitelistedCommands() {
 			Category:             "agent",
 			RequiresConfirmation: true,
 			Handler: func(ctx context.Context, args map[string]string) (*types.CommandResult, error) {
-				// Delegate to update handler
+				if cs.updateService == nil {
+					return &types.CommandResult{
+						Success: false,
+						Output:  "Update service not available",
+					}, nil
+				}
+
+				// Check for available updates
+				metadata, err := cs.updateService.CheckForUpdate(ctx)
+				if err != nil {
+					cs.logger.Error("Failed to check for updates", "error", err)
+					return &types.CommandResult{
+						Success: false,
+						Output:  fmt.Sprintf("Failed to check for updates: %s", err.Error()),
+					}, nil
+				}
+
+				if metadata == nil {
+					return &types.CommandResult{
+						Success: true,
+						Output:  "No updates available - agent is already up to date",
+					}, nil
+				}
+
+				// Apply the update
+				cs.logger.Info("Applying agent update", "version", metadata.Version)
+				if err := cs.updateService.ApplyUpdate(ctx, metadata, nil); err != nil {
+					cs.logger.Error("Failed to apply update", "error", err)
+					return &types.CommandResult{
+						Success: false,
+						Output:  fmt.Sprintf("Failed to apply update: %s", err.Error()),
+					}, nil
+				}
+
 				return &types.CommandResult{
-					Success: false,
-					Output:  "Please use the 'agent.update.apply' command to update the agent",
+					Success: true,
+					Output:  fmt.Sprintf("Update to version %s applied successfully. Agent will restart.", metadata.Version),
 				}, nil
 			},
 		},
