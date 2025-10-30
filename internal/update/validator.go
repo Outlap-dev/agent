@@ -16,7 +16,7 @@ import (
 
 // Default embedded public key for verifying update signatures
 var EmbeddedPublicKey = `-----BEGIN PUBLIC KEY-----
-MCowBQYDK2VwAyEAKgfda25+RtKnitigHboj2dT0RFpOQjCDnKoYzBTKgQ8=
+MCowBQYDK2VwAyEAw5rJ14PFubDpz7fx67APlspgH5S3GRTVUohhq2zTqc0=
 -----END PUBLIC KEY-----`
 
 type Validator struct {
