@@ -814,7 +814,7 @@ func (s *updateService) fetchBackendManifest(ctx context.Context) (*types.Update
 		"binary_url", binaryURL)
 
 	// Download and parse checksum and signature files
-	checksum, signature, err := s.fetchChecksumAndSignature(ctx, checksumURL, signatureURL)
+	manifestContent, checksum, signature, err := s.fetchChecksumAndSignature(ctx, checksumURL, signatureURL)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch checksum/signature: %w", err)
 	}
@@ -825,70 +825,71 @@ func (s *updateService) fetchBackendManifest(ctx context.Context) (*types.Update
 		DownloadURL:      binaryURL,
 		SHA256:           checksum,
 		Signature:        signature,
-		ChecksumManifest: fmt.Sprintf("%s  outlap-agent_%s\n", checksum, platform), // Reconstruct for validation
-		Changelog:        "", // Not provided by backend manifest
+		ChecksumManifest: manifestContent, // Use full manifest content as signed by release pipeline
+		Changelog:        "",             // Not provided by backend manifest
 	}
 
 	return metadata, nil
 }
 
 // fetchChecksumAndSignature downloads and parses the platform-specific checksum and signature files
-func (s *updateService) fetchChecksumAndSignature(ctx context.Context, checksumURL, signatureURL string) (string, string, error) {
+// Returns the full checksum manifest content, parsed checksum value, and signature
+func (s *updateService) fetchChecksumAndSignature(ctx context.Context, checksumURL, signatureURL string) (string, string, string, error) {
 	// Fetch checksum file
 	checksumReq, err := http.NewRequestWithContext(ctx, http.MethodGet, checksumURL, nil)
 	if err != nil {
-		return "", "", fmt.Errorf("failed to create checksum request: %w", err)
+		return "", "", "", fmt.Errorf("failed to create checksum request: %w", err)
 	}
 	s.decorateRequest(checksumReq, "")
 
 	checksumResp, err := s.httpClient.Do(checksumReq)
 	if err != nil {
-		return "", "", fmt.Errorf("failed to fetch checksum: %w", err)
+		return "", "", "", fmt.Errorf("failed to fetch checksum: %w", err)
 	}
 	defer checksumResp.Body.Close()
 
 	if checksumResp.StatusCode != http.StatusOK {
-		return "", "", fmt.Errorf("checksum download returned status %d", checksumResp.StatusCode)
+		return "", "", "", fmt.Errorf("checksum download returned status %d", checksumResp.StatusCode)
 	}
 
 	// Read checksum file (small file, ~91 bytes)
 	checksumBytes, err := io.ReadAll(checksumResp.Body)
 	if err != nil {
-		return "", "", fmt.Errorf("failed to read checksum: %w", err)
+		return "", "", "", fmt.Errorf("failed to read checksum: %w", err)
 	}
 
 	// Parse checksum (format: "hash  filename" or just "hash")
 	checksumStr := strings.TrimSpace(string(checksumBytes))
 	checksumFields := strings.Fields(checksumStr)
 	if len(checksumFields) == 0 {
-		return "", "", fmt.Errorf("invalid checksum format")
+		return "", "", "", fmt.Errorf("invalid checksum format")
 	}
 	checksum := checksumFields[0]
 
 	// Fetch signature file
 	sigReq, err := http.NewRequestWithContext(ctx, http.MethodGet, signatureURL, nil)
 	if err != nil {
-		return "", "", fmt.Errorf("failed to create signature request: %w", err)
+		return "", "", "", fmt.Errorf("failed to create signature request: %w", err)
 	}
 	s.decorateRequest(sigReq, "")
 
 	sigResp, err := s.httpClient.Do(sigReq)
 	if err != nil {
-		return "", "", fmt.Errorf("failed to fetch signature: %w", err)
+		return "", "", "", fmt.Errorf("failed to fetch signature: %w", err)
 	}
 	defer sigResp.Body.Close()
 
 	if sigResp.StatusCode != http.StatusOK {
-		return "", "", fmt.Errorf("signature download returned status %d", sigResp.StatusCode)
+		return "", "", "", fmt.Errorf("signature download returned status %d", sigResp.StatusCode)
 	}
 
 	// Read signature file (small file, ~88 bytes)
 	signatureBytes, err := io.ReadAll(sigResp.Body)
 	if err != nil {
-		return "", "", fmt.Errorf("failed to read signature: %w", err)
+		return "", "", "", fmt.Errorf("failed to read signature: %w", err)
 	}
 
 	signature := strings.TrimSpace(string(signatureBytes))
 
-	return checksum, signature, nil
+	return string(checksumBytes), checksum, signature, nil
 }
