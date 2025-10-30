@@ -67,7 +67,7 @@ Optional auto-reconnection settings:
 - `RECONNECT_BACKOFF_MAX`: Maximum backoff delay in seconds (default: `60`)
 
 Database backup configuration:
-- `PULSEUP_BACKUP_DIR`: Override the default `/var/lib/outlap/backups` directory where database backups (including MongoDB archives) are stored on the agent
+- `OUTLAP_BACKUP_DIR`: Override the default `/var/lib/outlap/backups` directory where database backups (including MongoDB archives) are stored on the agent
 
 ## Building and Running
 

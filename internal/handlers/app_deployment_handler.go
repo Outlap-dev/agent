@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"outlap-agent-go/internal/shared/logpaths"
 	"outlap-agent-go/pkg/logger"
 	"outlap-agent-go/pkg/types"
 )
@@ -133,9 +134,42 @@ func (h *DeployApplicationHandler) Deploy(ctx context.Context, data json.RawMess
 		}, nil
 	}
 
+	// Initialize deployment log directory for early logging
+	var logsDir string
+	if buildService := h.services.GetBuildService(); buildService != nil {
+		logsDir = logpaths.ResolveDeploymentLogsDir()
+	}
+
+	// Helper functions for early logging
+	logEarlyStep := func(level, message string) {
+		if logsDir != "" {
+			deployLogPath := logpaths.DeploymentLogPath(request.DeploymentUID, "deploy")
+			serviceLogPath := logpaths.ServiceDeploymentLogPath(request.ServiceUID, "deploy")
+			
+			logEntry := fmt.Sprintf("%s - %s - %s\n", time.Now().Format(time.RFC3339), level, message)
+			
+			// Write to deployment-specific log
+			if err := os.MkdirAll(filepath.Dir(deployLogPath), 0o755); err == nil {
+				if file, err := os.OpenFile(deployLogPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644); err == nil {
+					file.WriteString(logEntry)
+					file.Close()
+				}
+			}
+			
+			// Write to service log
+			if err := os.MkdirAll(filepath.Dir(serviceLogPath), 0o755); err == nil {
+				if file, err := os.OpenFile(serviceLogPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644); err == nil {
+					file.WriteString(logEntry)
+					file.Close()
+				}
+			}
+		}
+	}
+
 	// Clone or pull the repository using the GitHub repo URL and access token from the request
 	if isInitialClone {
 		h.logger.Info("Cloning repository for first deployment", "repo", request.GitHubRepo, "path", clonePath)
+		logEarlyStep("INFO", fmt.Sprintf("Cloning repository %s to %s", request.GitHubRepo, clonePath))
 
 		// Use the new direct clone method that doesn't require server calls
 		cloneResult, err := gitService.CloneGitHubRepoDirectly(ctx, request.GitHubRepo, request.AccessToken, clonePath, request.GitHubBranch)
@@ -147,6 +181,7 @@ func (h *DeployApplicationHandler) Deploy(ctx context.Context, data json.RawMess
 				errorMsg = fmt.Sprintf("Clone failed: %s", cloneResult.Error)
 			}
 			h.logger.Error(errorMsg)
+			logEarlyStep("ERROR", errorMsg)
 			h.updateDeploymentStatus(ctx, request.DeploymentUID, types.DeploymentStatusFailed, errorMsg, nil)
 			return &types.CommandResponse{
 				Success: false,
@@ -155,25 +190,33 @@ func (h *DeployApplicationHandler) Deploy(ctx context.Context, data json.RawMess
 		}
 
 		h.logger.Info("Repository cloned successfully", "path", clonePath)
+		logEarlyStep("INFO", fmt.Sprintf("Repository cloned successfully to %s", clonePath))
 	} else {
 		h.logger.Info("Pulling latest changes for existing repository", "path", clonePath)
+		logEarlyStep("INFO", fmt.Sprintf("Pulling latest changes for existing repository at %s", clonePath))
 
 		// Use the new direct pull method to get the latest commit
 		if _, err := gitService.PullGitHubRepoDirectly(ctx, clonePath, request.AccessToken, request.GitHubBranch); err != nil {
 			h.logger.Warn("Failed to pull latest changes", "error", err)
+			logEarlyStep("WARN", fmt.Sprintf("Failed to pull latest changes: %v", err))
 			// Don't fail the deployment if pull fails, continue with existing code
+		} else {
+			logEarlyStep("INFO", "Successfully pulled latest changes")
 		}
 	}
 
 	commitSHA, err = gitService.GetCommitSHA(ctx, clonePath)
 	if err != nil {
 		h.logger.Error("Failed to determine commit SHA", "error", err)
+		logEarlyStep("ERROR", fmt.Sprintf("Failed to determine commit SHA: %v", err))
 		h.updateDeploymentStatus(ctx, request.DeploymentUID, types.DeploymentStatusFailed, fmt.Sprintf("Failed to determine commit SHA: %v", err), nil)
 		return &types.CommandResponse{
 			Success: false,
 			Error:   fmt.Sprintf("failed to determine commit sha: %v", err),
 		}, nil
 	}
+
+	logEarlyStep("INFO", fmt.Sprintf("Using commit SHA: %s", commitSHA))
 
 	commitMessage, err = gitService.GetCommitMessage(ctx, clonePath, commitSHA)
 	if err != nil {
@@ -240,14 +283,14 @@ func (h *DeployApplicationHandler) Deploy(ctx context.Context, data json.RawMess
 	}
 	if primaryExternal > 0 {
 		request.ExposedPort = primaryExternal
-		envVars["PULSEUP_PRIMARY_EXTERNAL_PORT"] = strconv.Itoa(primaryExternal)
+		envVars["OUTLAP_PRIMARY_EXTERNAL_PORT"] = strconv.Itoa(primaryExternal)
 	}
 
 	if len(portMappings) > 0 {
 		if encoded, err := json.Marshal(portMappings); err != nil {
 			h.logger.Warn("Failed to marshal port mappings", "error", err)
 		} else {
-			envVars["PULSEUP_PORT_MAPPINGS"] = string(encoded)
+			envVars["OUTLAP_PORT_MAPPINGS"] = string(encoded)
 		}
 	}
 
@@ -274,6 +317,7 @@ func (h *DeployApplicationHandler) Deploy(ctx context.Context, data json.RawMess
 			errorMsg = fmt.Sprintf("Unsupported build type: %s", buildInfo.Type)
 		}
 		h.logger.Error(errorMsg)
+		logEarlyStep("ERROR", errorMsg)
 		h.updateDeploymentStatus(ctx, request.DeploymentUID, types.DeploymentStatusFailed, errorMsg, nil)
 		return &types.CommandResponse{
 			Success: false,
@@ -289,6 +333,10 @@ func (h *DeployApplicationHandler) Deploy(ctx context.Context, data json.RawMess
 		Networks:     networks,
 		PortMappings: portMappings,
 	}
+
+	// Complete the prepare deployment step
+	logEarlyStep("INFO", fmt.Sprintf("Deployment method determined: %s", deploymentMethod))
+	logEarlyStep("INFO", "Deployment preparation completed successfully")
 
 	deploymentResult, err = strategy.Deploy(ctx, strategyOptions)
 

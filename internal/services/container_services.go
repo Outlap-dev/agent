@@ -6,38 +6,40 @@ import (
 )
 
 type serviceBundle struct {
-	dockerImpl            *DockerServiceImpl
-	dockerService         DockerService
-	gitImpl               *GitServiceImpl
-	gitService            GitService
-	buildImpl             *BuildServiceImpl
-	buildService          BuildService
-	systemImpl            *SystemServiceImpl
-	systemService         SystemService
-	databaseImpl          *DatabaseServiceImpl
-	databaseService       DatabaseService
-	caddyImpl             *caddyService
-	caddyService          CaddyService
-	statusImpl            *StatusServiceImpl
-	statusService         StatusService
-	containerEventImpl    *ContainerEventServiceImpl
-	containerEventService ContainerEventService
-	deploymentImpl        *DeploymentServiceImpl
-	deploymentService     DeploymentService
-	domainManager         *DomainManager
-	dockerfileImpl        *DockerfileServiceImpl
-	dockerfileService     DockerfileService
-	nixpacksImpl          *NixpacksServiceImpl
-	nixpacksService       NixpacksService
-	dockerComposeImpl     *DockerComposeServiceImpl
-	dockerComposeService  DockerComposeService
-	monitoringImpl        *MonitoringServiceImpl
-	monitoringService     MonitoringService
-	commandImpl           *commandService
-	commandService        CommandService
-	updateImpl            *updateService
-	updateService         UpdateService
-	agentLogService       AgentLogService
+	dockerImpl                 *DockerServiceImpl
+	dockerService              DockerService
+	gitImpl                    *GitServiceImpl
+	gitService                 GitService
+	buildImpl                  *BuildServiceImpl
+	buildService               BuildService
+	systemImpl                 *SystemServiceImpl
+	systemService              SystemService
+	databaseImpl               *DatabaseServiceImpl
+	databaseService            DatabaseService
+	caddyImpl                  *caddyService
+	caddyService               CaddyService
+	statusImpl                 *StatusServiceImpl
+	statusService              StatusService
+	containerEventImpl         *ContainerEventServiceImpl
+	containerEventService      ContainerEventService
+	periodicStatusCheckerImpl  *PeriodicStatusChecker
+	periodicStatusCheckerService PeriodicStatusCheckerService
+	deploymentImpl             *DeploymentServiceImpl
+	deploymentService          DeploymentService
+	domainManager              *DomainManager
+	dockerfileImpl             *DockerfileServiceImpl
+	dockerfileService          DockerfileService
+	nixpacksImpl               *NixpacksServiceImpl
+	nixpacksService            NixpacksService
+	dockerComposeImpl          *DockerComposeServiceImpl
+	dockerComposeService       DockerComposeService
+	monitoringImpl             *MonitoringServiceImpl
+	monitoringService          MonitoringService
+	commandImpl                *commandService
+	commandService             CommandService
+	updateImpl                 *updateService
+	updateService              UpdateService
+	agentLogService            AgentLogService
 }
 
 func newServiceBundle(cfg *config.Config, baseLogger *logger.Logger, wsManager WebSocketManager, containerLogger *logger.Logger) *serviceBundle {
@@ -71,6 +73,9 @@ func newServiceBundle(cfg *config.Config, baseLogger *logger.Logger, wsManager W
 	bundle.containerEventImpl = NewContainerEventService(baseLogger, bundle.dockerImpl.client, bundle.statusService)
 	bundle.containerEventImpl.SetWebSocketManager(wsManager)
 	bundle.containerEventService = bundle.containerEventImpl
+
+	bundle.periodicStatusCheckerImpl = NewPeriodicStatusChecker(baseLogger, bundle.dockerService, bundle.statusService)
+	bundle.periodicStatusCheckerService = bundle.periodicStatusCheckerImpl
 
 	bundle.deploymentImpl = NewDeploymentService(baseLogger, bundle.dockerService)
 	bundle.deploymentService = bundle.deploymentImpl
@@ -144,6 +149,9 @@ func (b *serviceBundle) apply(c *ServiceContainer) {
 
 	c.containerEventSvc = b.containerEventImpl
 	c.containerEventService = b.containerEventService
+
+	c.periodicStatusCheckerSvc = b.periodicStatusCheckerImpl
+	c.periodicStatusCheckerService = b.periodicStatusCheckerService
 
 	c.deploymentSvc = b.deploymentImpl
 	c.deploymentService = b.deploymentService

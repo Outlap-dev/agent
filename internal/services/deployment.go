@@ -103,14 +103,14 @@ func (d *DeploymentServiceImpl) DeployContainer(ctx context.Context, serviceUID,
 	logStep("INFO", fmt.Sprintf("Using candidate container name %s", containerName))
 
 	var portMappings []types.PortMapping
-	if rawMappings, exists := envVars["PULSEUP_PORT_MAPPINGS"]; exists {
+	if rawMappings, exists := envVars["OUTLAP_PORT_MAPPINGS"]; exists {
 		if rawMappings != "" {
 			if err := json.Unmarshal([]byte(rawMappings), &portMappings); err != nil {
 				d.logger.Warn("Failed to parse port mappings", "error", err)
 				portMappings = nil
 			}
 		}
-		delete(envVars, "PULSEUP_PORT_MAPPINGS")
+		delete(envVars, "OUTLAP_PORT_MAPPINGS")
 	}
 	portMappings = sanitizeDeployPortMappings(portMappings)
 	singleSlotDeployment := requiresSingleSlotDeployment(portMappings)

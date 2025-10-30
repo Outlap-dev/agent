@@ -13,7 +13,7 @@ import (
 
 	wscontracts "outlap-agent-go/pkg/contracts/websocket"
 	"outlap-agent-go/pkg/logger"
-	pulseuptypes "outlap-agent-go/pkg/types"
+	outlaptypes "outlap-agent-go/pkg/types"
 )
 
 // dockerEventsClient exposes the subset of Docker client functionality needed for streaming events.
@@ -36,7 +36,7 @@ type ContainerEventServiceImpl struct {
 }
 
 type serviceState struct {
-	status       pulseuptypes.ServiceStatus
+	status       outlaptypes.ServiceStatus
 	errorMessage string
 }
 
@@ -189,26 +189,26 @@ func (c *ContainerEventServiceImpl) handleEvent(ctx context.Context, msg events.
 
 	switch action {
 	case "start", "restart":
-		c.updateServiceStatus(ctx, serviceUID, pulseuptypes.ServiceStatusRunning, "")
+		c.updateServiceStatus(ctx, serviceUID, outlaptypes.ServiceStatusRunning, "")
 	case "die", "stop", "kill", "destroy", "oom":
 		exitCode := attrs["exitCode"]
 		errorMessage := ""
 		if exitCode != "" && exitCode != "0" {
 			errorMessage = fmt.Sprintf("container exited with code %s", exitCode)
 		}
-		c.updateServiceStatus(ctx, serviceUID, pulseuptypes.ServiceStatusStopped, errorMessage)
+		c.updateServiceStatus(ctx, serviceUID, outlaptypes.ServiceStatusStopped, errorMessage)
 		c.emitContainerStopped(msg, serviceUID, timestamp, exitCode)
 	case "health_status: healthy":
-		c.updateServiceStatus(ctx, serviceUID, pulseuptypes.ServiceStatusRunning, "")
+		c.updateServiceStatus(ctx, serviceUID, outlaptypes.ServiceStatusRunning, "")
 	case "health_status: unhealthy":
-		c.updateServiceStatus(ctx, serviceUID, pulseuptypes.ServiceStatusFailed, "container reported unhealthy")
+		c.updateServiceStatus(ctx, serviceUID, outlaptypes.ServiceStatusFailed, "container reported unhealthy")
 		c.emitContainerStopped(msg, serviceUID, timestamp, attrs["exitCode"])
 	default:
 		c.logger.Debug("Ignoring container action", "action", action)
 	}
 }
 
-func (c *ContainerEventServiceImpl) updateServiceStatus(ctx context.Context, serviceUID string, status pulseuptypes.ServiceStatus, errorMessage string) {
+func (c *ContainerEventServiceImpl) updateServiceStatus(ctx context.Context, serviceUID string, status outlaptypes.ServiceStatus, errorMessage string) {
 	c.stateMu.Lock()
 	state := c.lastSeen[serviceUID]
 	if state.status == status && state.errorMessage == errorMessage {

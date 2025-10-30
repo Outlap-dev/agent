@@ -29,7 +29,7 @@ const (
 )
 
 func getBackupBaseDir() string {
-	if override := os.Getenv("PULSEUP_BACKUP_DIR"); override != "" {
+	if override := os.Getenv("OUTLAP_BACKUP_DIR"); override != "" {
 		return override
 	}
 	return "/var/lib/outlap/backups"

@@ -3,11 +3,15 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 
 	"outlap-agent-go/pkg/logger"
 	"outlap-agent-go/pkg/types"
 )
+
+// ErrNoActiveContainer indicates that no active container is currently available.
+var ErrNoActiveContainer = errors.New("no active container")
 
 // Handler defines the interface for all command handlers
 type Handler interface {
@@ -316,7 +320,7 @@ func (h *BaseHandler) resolveActiveContainer(ctx context.Context, serviceUID str
 	}
 
 	if container == nil {
-		return nil, fmt.Errorf("no active container for service %s", serviceUID)
+		return nil, fmt.Errorf("%w for service %s", ErrNoActiveContainer, serviceUID)
 	}
 
 	return container, nil

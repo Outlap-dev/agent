@@ -39,43 +39,45 @@ type ServiceContainer struct {
 	wsAdapter   *wsbootstrap.Adapter
 
 	// Business services
-	dockerService         DockerService
-	gitService            GitService
-	buildService          BuildService
-	systemService         SystemService
-	databaseService       DatabaseService
-	caddyService          CaddyService
-	statusService         StatusService
-	deploymentService     DeploymentService
-	domainService         handlers.DomainService
-	dockerfileService     DockerfileService
-	nixpacksService       NixpacksService
-	dockerComposeService  DockerComposeService
-	monitoringService     MonitoringService
-	containerEventService ContainerEventService
-	updateService         UpdateService
-	commandService        CommandService
-	agentLogService       AgentLogService
-	sessionManager        *AgentSession
+	dockerService              DockerService
+	gitService                 GitService
+	buildService               BuildService
+	systemService              SystemService
+	databaseService            DatabaseService
+	caddyService               CaddyService
+	statusService              StatusService
+	deploymentService          DeploymentService
+	domainService              handlers.DomainService
+	dockerfileService          DockerfileService
+	nixpacksService            NixpacksService
+	dockerComposeService       DockerComposeService
+	monitoringService          MonitoringService
+	containerEventService      ContainerEventService
+	periodicStatusCheckerService PeriodicStatusCheckerService
+	updateService              UpdateService
+	commandService             CommandService
+	agentLogService            AgentLogService
+	sessionManager             *AgentSession
 
 	// Service implementations
-	dockerSvc         *DockerServiceImpl
-	gitSvc            *GitServiceImpl
-	buildSvc          *BuildServiceImpl
-	systemSvc         *SystemServiceImpl
-	databaseSvc       *DatabaseServiceImpl
-	caddySvc          *caddyService
-	statusSvc         *StatusServiceImpl
-	deploymentSvc     *DeploymentServiceImpl
-	dockerfileSvc     *DockerfileServiceImpl
-	nixpacksSvc       *NixpacksServiceImpl
-	dockerComposeSvc  *DockerComposeServiceImpl
-	monitoringSvc     *MonitoringServiceImpl
-	containerEventSvc *ContainerEventServiceImpl
-	updateSvc         *updateService
-	commandSvc        *commandService
-	hardwareReporter  *HardwareReporter
-	domainMgr         *DomainManager
+	dockerSvc              *DockerServiceImpl
+	gitSvc                 *GitServiceImpl
+	buildSvc               *BuildServiceImpl
+	systemSvc              *SystemServiceImpl
+	databaseSvc            *DatabaseServiceImpl
+	caddySvc               *caddyService
+	statusSvc              *StatusServiceImpl
+	deploymentSvc          *DeploymentServiceImpl
+	dockerfileSvc          *DockerfileServiceImpl
+	nixpacksSvc            *NixpacksServiceImpl
+	dockerComposeSvc       *DockerComposeServiceImpl
+	monitoringSvc          *MonitoringServiceImpl
+	containerEventSvc      *ContainerEventServiceImpl
+	periodicStatusCheckerSvc *PeriodicStatusChecker
+	updateSvc              *updateService
+	commandSvc             *commandService
+	hardwareReporter       *HardwareReporter
+	domainMgr              *DomainManager
 }
 
 // NewServiceContainer creates a new service container
@@ -253,6 +255,13 @@ func (c *ServiceContainer) Shutdown(ctx context.Context) error {
 		}
 	}
 
+	// Stop periodic status checker
+	if c.periodicStatusCheckerService != nil {
+		if err := c.periodicStatusCheckerService.Stop(ctx); err != nil {
+			c.logger.Error("Error stopping periodic status checker", "error", err)
+		}
+	}
+
 	// Stop monitoring service
 	if c.monitoringService != nil {
 		if err := c.monitoringService.StopMetricsCollection(ctx); err != nil {
@@ -375,6 +384,13 @@ func (c *ServiceContainer) startBackgroundServices(ctx context.Context) {
 	if c.containerEventService != nil {
 		if err := c.containerEventService.Start(ctx); err != nil {
 			c.logger.Error("Failed to start container event service", "error", err)
+		}
+	}
+
+	// Start periodic status checker
+	if c.periodicStatusCheckerService != nil {
+		if err := c.periodicStatusCheckerService.Start(ctx); err != nil {
+			c.logger.Error("Failed to start periodic status checker", "error", err)
 		}
 	}
 

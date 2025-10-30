@@ -39,8 +39,8 @@ const (
 	CaddyContainerDataDir    = "/data"
 	CaddyNetwork             = "outlap-net"
 	CaddyBridgeNetwork       = "bridge"
-	CaddyServiceUID          = "svc_pulseup_caddy"
-	CaddyDeploymentUID       = "dep_pulseup_caddy"
+	CaddyServiceUID          = "svc_outlap_caddy"
+	CaddyDeploymentUID       = "dep_outlap_caddy"
 	CaddyLifecycleName       = "outlap-caddy"
 	CaddyLifecycleVersion    = "1"
 	CaddyComponentLabel      = "outlap.component"
@@ -73,7 +73,7 @@ type caddyService struct {
 
 // NewCaddyService creates a new Caddy service instance
 func NewCaddyService(dockerClient *client.Client, logger *logger.Logger) CaddyService {
-	hostRoot := strings.TrimSpace(os.Getenv("PULSEUP_CADDY_HOST_PATH"))
+	hostRoot := strings.TrimSpace(os.Getenv("OUTLAP_CADDY_HOST_PATH"))
 	if hostRoot == "" {
 		hostRoot = CaddyStateDir
 	} else {

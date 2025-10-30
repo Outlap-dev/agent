@@ -16,7 +16,7 @@ import (
 
 	wscontracts "outlap-agent-go/pkg/contracts/websocket"
 	"outlap-agent-go/pkg/logger"
-	pulseuptypes "outlap-agent-go/pkg/types"
+	outlaptypes "outlap-agent-go/pkg/types"
 )
 
 // MonitoringServiceImpl implements the MonitoringService interface
@@ -26,15 +26,15 @@ type MonitoringServiceImpl struct {
 	wsManager    wscontracts.Emitter // WebSocket manager for sending alerts
 
 	// Configuration
-	config pulseuptypes.MonitoringConfig
+	config outlaptypes.MonitoringConfig
 
 	// State management
 	mu               sync.RWMutex
 	enabled          bool
-	alertRules       map[string]*pulseuptypes.AlertRule
-	activeAlerts     map[string]*pulseuptypes.AlertEvent
-	logFilters       map[string]*pulseuptypes.LogFilter
-	containerMetrics map[string]*pulseuptypes.ContainerMetrics
+	alertRules       map[string]*outlaptypes.AlertRule
+	activeAlerts     map[string]*outlaptypes.AlertEvent
+	logFilters       map[string]*outlaptypes.LogFilter
+	containerMetrics map[string]*outlaptypes.ContainerMetrics
 
 	// Monitoring controls
 	loopCtx        context.Context
@@ -54,12 +54,12 @@ func NewMonitoringService(logger *logger.Logger, dockerClient *client.Client) *M
 		loopCtx:          context.Background(),
 		loopCancel:       func() {},
 		enabled:          false,
-		alertRules:       make(map[string]*pulseuptypes.AlertRule),
-		activeAlerts:     make(map[string]*pulseuptypes.AlertEvent),
-		logFilters:       make(map[string]*pulseuptypes.LogFilter),
-		containerMetrics: make(map[string]*pulseuptypes.ContainerMetrics),
+		alertRules:       make(map[string]*outlaptypes.AlertRule),
+		activeAlerts:     make(map[string]*outlaptypes.AlertEvent),
+		logFilters:       make(map[string]*outlaptypes.LogFilter),
+		containerMetrics: make(map[string]*outlaptypes.ContainerMetrics),
 		startTime:        time.Now(),
-		config: pulseuptypes.MonitoringConfig{
+		config: outlaptypes.MonitoringConfig{
 			MetricsInterval:     30 * time.Second,
 			HealthCheckInterval: 60 * time.Second,
 			AlertCooldown:       5 * time.Minute,
@@ -157,7 +157,7 @@ func (m *MonitoringServiceImpl) StopMetricsCollection(ctx context.Context) error
 }
 
 // GetMetrics returns current metrics
-func (m *MonitoringServiceImpl) GetMetrics(ctx context.Context, timeRange string) (*pulseuptypes.SystemMetrics, error) {
+func (m *MonitoringServiceImpl) GetMetrics(ctx context.Context, timeRange string) (*outlaptypes.SystemMetrics, error) {
 	// This would be enhanced to support time ranges and historical data
 	// For now, return current system metrics
 	systemSvc := NewSystemService(m.logger)
@@ -165,7 +165,7 @@ func (m *MonitoringServiceImpl) GetMetrics(ctx context.Context, timeRange string
 }
 
 // SetupAlerts configures alert rules
-func (m *MonitoringServiceImpl) SetupAlerts(ctx context.Context, rules []pulseuptypes.AlertRule) error {
+func (m *MonitoringServiceImpl) SetupAlerts(ctx context.Context, rules []outlaptypes.AlertRule) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -183,12 +183,12 @@ func (m *MonitoringServiceImpl) SetupAlerts(ctx context.Context, rules []pulseup
 }
 
 // GetContainerMetrics returns metrics for all monitored containers
-func (m *MonitoringServiceImpl) GetContainerMetrics(ctx context.Context) (map[string]*pulseuptypes.ContainerMetrics, error) {
+func (m *MonitoringServiceImpl) GetContainerMetrics(ctx context.Context) (map[string]*outlaptypes.ContainerMetrics, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
 	// Return copy of metrics to avoid concurrent access issues
-	result := make(map[string]*pulseuptypes.ContainerMetrics)
+	result := make(map[string]*outlaptypes.ContainerMetrics)
 	for k, v := range m.containerMetrics {
 		metricsCopy := *v
 		result[k] = &metricsCopy
@@ -198,7 +198,7 @@ func (m *MonitoringServiceImpl) GetContainerMetrics(ctx context.Context) (map[st
 }
 
 // GetMonitoringStatus returns the current status of the monitoring system
-func (m *MonitoringServiceImpl) GetMonitoringStatus(ctx context.Context) (*pulseuptypes.MonitoringStatus, error) {
+func (m *MonitoringServiceImpl) GetMonitoringStatus(ctx context.Context) (*outlaptypes.MonitoringStatus, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
@@ -209,7 +209,7 @@ func (m *MonitoringServiceImpl) GetMonitoringStatus(ctx context.Context) (*pulse
 		}
 	}
 
-	return &pulseuptypes.MonitoringStatus{
+	return &outlaptypes.MonitoringStatus{
 		Enabled:               m.enabled,
 		ActiveContainers:      len(m.containerMetrics),
 		TotalAlerts:           len(m.activeAlerts),
@@ -282,7 +282,7 @@ func (m *MonitoringServiceImpl) collectMetrics(ctx context.Context) error {
 }
 
 // collectContainerMetrics collects metrics for a specific container
-func (m *MonitoringServiceImpl) collectContainerMetrics(ctx context.Context, containerID, containerName, state string) (*pulseuptypes.ContainerMetrics, error) {
+func (m *MonitoringServiceImpl) collectContainerMetrics(ctx context.Context, containerID, containerName, state string) (*outlaptypes.ContainerMetrics, error) {
 	// Get container inspect info for basic details
 	inspect, err := m.dockerClient.ContainerInspect(ctx, containerID)
 	if err != nil {
@@ -308,23 +308,23 @@ func (m *MonitoringServiceImpl) collectContainerMetrics(ctx context.Context, con
 	cleanName := strings.TrimPrefix(containerName, "/")
 
 	// Create basic metrics (detailed stats collection can be added later)
-	metrics := &pulseuptypes.ContainerMetrics{
+	metrics := &outlaptypes.ContainerMetrics{
 		ContainerID:   containerID,
 		ContainerName: cleanName,
-		Status:        pulseuptypes.FromDockerStatus(state),
-		CPU: pulseuptypes.ContainerCPUMetrics{
+		Status:        outlaptypes.FromDockerStatus(state),
+		CPU: outlaptypes.ContainerCPUMetrics{
 			Usage:     0, // TODO: Implement CPU metrics collection
 			Throttled: 0,
 			Limit:     0,
 		},
-		Memory: pulseuptypes.ContainerMemoryMetrics{
+		Memory: outlaptypes.ContainerMemoryMetrics{
 			Usage:   0, // TODO: Implement memory metrics collection
 			Limit:   0,
 			Percent: 0,
 			Cache:   0,
 			RSS:     0,
 		},
-		Network: pulseuptypes.ContainerNetworkMetrics{
+		Network: outlaptypes.ContainerNetworkMetrics{
 			RxBytes:   0, // TODO: Implement network metrics collection
 			TxBytes:   0,
 			RxPackets: 0,
@@ -332,7 +332,7 @@ func (m *MonitoringServiceImpl) collectContainerMetrics(ctx context.Context, con
 			RxErrors:  0,
 			TxErrors:  0,
 		},
-		Disk: pulseuptypes.ContainerDiskMetrics{
+		Disk: outlaptypes.ContainerDiskMetrics{
 			ReadBytes:  0, // TODO: Implement disk metrics collection
 			WriteBytes: 0,
 			ReadOps:    0,
@@ -348,7 +348,7 @@ func (m *MonitoringServiceImpl) collectContainerMetrics(ctx context.Context, con
 	}
 
 	if inspect.Config != nil {
-		metrics.PulseUpManaged = strings.EqualFold(inspect.Config.Labels[managedLabelKey], "true")
+		metrics.OutlapManaged = strings.EqualFold(inspect.Config.Labels[managedLabelKey], "true")
 	}
 
 	// Add response time monitoring if enabled
@@ -372,25 +372,25 @@ func (m *MonitoringServiceImpl) incrementHealthErrors() {
 }
 
 // determineHealthStatus determines the health status of a container
-func (m *MonitoringServiceImpl) determineHealthStatus(inspect *types.ContainerJSON) pulseuptypes.HealthStatus {
+func (m *MonitoringServiceImpl) determineHealthStatus(inspect *types.ContainerJSON) outlaptypes.HealthStatus {
 	if inspect.State.Health == nil {
-		return pulseuptypes.HealthStatusNone
+		return outlaptypes.HealthStatusNone
 	}
 
 	switch inspect.State.Health.Status {
 	case "healthy":
-		return pulseuptypes.HealthStatusHealthy
+		return outlaptypes.HealthStatusHealthy
 	case "unhealthy":
-		return pulseuptypes.HealthStatusUnhealthy
+		return outlaptypes.HealthStatusUnhealthy
 	case "starting":
-		return pulseuptypes.HealthStatusStarting
+		return outlaptypes.HealthStatusStarting
 	default:
-		return pulseuptypes.HealthStatusNone
+		return outlaptypes.HealthStatusNone
 	}
 }
 
 // checkResponseTime performs response time check for a container
-func (m *MonitoringServiceImpl) checkResponseTime(inspect *types.ContainerJSON) *pulseuptypes.ResponseTimeMetrics {
+func (m *MonitoringServiceImpl) checkResponseTime(inspect *types.ContainerJSON) *outlaptypes.ResponseTimeMetrics {
 	// Extract exposed ports and check HTTP endpoints
 	for port := range inspect.Config.ExposedPorts {
 		if strings.Contains(string(port), "80") || strings.Contains(string(port), "8080") || strings.Contains(string(port), "3000") {
@@ -401,7 +401,7 @@ func (m *MonitoringServiceImpl) checkResponseTime(inspect *types.ContainerJSON) 
 			resp, err := http.Get(url)
 			duration := time.Since(start)
 
-			metrics := &pulseuptypes.ResponseTimeMetrics{
+			metrics := &outlaptypes.ResponseTimeMetrics{
 				URL:          url,
 				ResponseTime: duration,
 				LastChecked:  time.Now(),
@@ -456,7 +456,7 @@ func (m *MonitoringServiceImpl) logMonitoringLoop(ctx context.Context) {
 }
 
 // checkAlertRules checks if any alert rules are triggered by the metrics
-func (m *MonitoringServiceImpl) checkAlertRules(metrics *pulseuptypes.ContainerMetrics) {
+func (m *MonitoringServiceImpl) checkAlertRules(metrics *outlaptypes.ContainerMetrics) {
 	for _, rule := range m.alertRules {
 		if !rule.Enabled {
 			continue
@@ -478,24 +478,24 @@ func (m *MonitoringServiceImpl) checkAlertRules(metrics *pulseuptypes.ContainerM
 }
 
 // shouldTriggerAlert determines if an alert should be triggered
-func (m *MonitoringServiceImpl) shouldTriggerAlert(rule *pulseuptypes.AlertRule, metrics *pulseuptypes.ContainerMetrics) bool {
+func (m *MonitoringServiceImpl) shouldTriggerAlert(rule *outlaptypes.AlertRule, metrics *outlaptypes.ContainerMetrics) bool {
 	var value float64
 
 	switch rule.MetricType {
-	case pulseuptypes.AlertMetricTypeCPUUsage:
+	case outlaptypes.AlertMetricTypeCPUUsage:
 		value = metrics.CPU.Usage
-	case pulseuptypes.AlertMetricTypeMemoryUsage:
+	case outlaptypes.AlertMetricTypeMemoryUsage:
 		value = metrics.Memory.Percent
-	case pulseuptypes.AlertMetricTypeContainerDown:
+	case outlaptypes.AlertMetricTypeContainerDown:
 		if !m.shouldEmitContainerDownAlert(metrics) {
 			return false
 		}
-		if metrics.Status != pulseuptypes.ServiceStatusRunning {
+		if metrics.Status != outlaptypes.ServiceStatusRunning {
 			value = 1
 		} else {
 			value = 0
 		}
-	case pulseuptypes.AlertMetricTypeResponseTime:
+	case outlaptypes.AlertMetricTypeResponseTime:
 		if metrics.ResponseTime != nil {
 			value = float64(metrics.ResponseTime.ResponseTime.Milliseconds())
 		}
@@ -505,29 +505,29 @@ func (m *MonitoringServiceImpl) shouldTriggerAlert(rule *pulseuptypes.AlertRule,
 
 	// Check if threshold is met
 	switch rule.Operator {
-	case pulseuptypes.AlertOperatorGreaterThan:
+	case outlaptypes.AlertOperatorGreaterThan:
 		return value > rule.Threshold
-	case pulseuptypes.AlertOperatorLessThan:
+	case outlaptypes.AlertOperatorLessThan:
 		return value < rule.Threshold
-	case pulseuptypes.AlertOperatorGreaterEqual:
+	case outlaptypes.AlertOperatorGreaterEqual:
 		return value >= rule.Threshold
-	case pulseuptypes.AlertOperatorLessEqual:
+	case outlaptypes.AlertOperatorLessEqual:
 		return value <= rule.Threshold
-	case pulseuptypes.AlertOperatorEqual:
+	case outlaptypes.AlertOperatorEqual:
 		return value == rule.Threshold
-	case pulseuptypes.AlertOperatorNotEqual:
+	case outlaptypes.AlertOperatorNotEqual:
 		return value != rule.Threshold
 	}
 
 	return false
 }
 
-func (m *MonitoringServiceImpl) shouldEmitContainerDownAlert(metrics *pulseuptypes.ContainerMetrics) bool {
+func (m *MonitoringServiceImpl) shouldEmitContainerDownAlert(metrics *outlaptypes.ContainerMetrics) bool {
 	if metrics == nil {
 		return false
 	}
 
-	if !metrics.PulseUpManaged {
+	if !metrics.OutlapManaged {
 		return false
 	}
 
@@ -547,7 +547,7 @@ func (m *MonitoringServiceImpl) shouldEmitContainerDownAlert(metrics *pulseuptyp
 }
 
 // triggerAlert triggers an alert
-func (m *MonitoringServiceImpl) triggerAlert(rule *pulseuptypes.AlertRule, metrics *pulseuptypes.ContainerMetrics) {
+func (m *MonitoringServiceImpl) triggerAlert(rule *outlaptypes.AlertRule, metrics *outlaptypes.ContainerMetrics) {
 	// Check cooldown period
 	if rule.LastTriggered != nil && time.Since(*rule.LastTriggered) < m.config.AlertCooldown {
 		return
@@ -556,7 +556,7 @@ func (m *MonitoringServiceImpl) triggerAlert(rule *pulseuptypes.AlertRule, metri
 	alertID := uuid.New().String()
 	now := time.Now()
 
-	alert := &pulseuptypes.AlertEvent{
+	alert := &outlaptypes.AlertEvent{
 		ID:          alertID,
 		RuleID:      rule.ID,
 		RuleName:    rule.Name,
@@ -570,19 +570,17 @@ func (m *MonitoringServiceImpl) triggerAlert(rule *pulseuptypes.AlertRule, metri
 	m.activeAlerts[alertID] = alert
 	rule.LastTriggered = &now
 
-	m.logger.Warn("Alert triggered", "rule", rule.Name, "container", metrics.ContainerName, "severity", rule.Severity)
-
 	// Send alert notification
 	m.sendAlertNotification(alert)
 }
 
 // formatAlertMessage formats an alert message
-func (m *MonitoringServiceImpl) formatAlertMessage(rule *pulseuptypes.AlertRule, metrics *pulseuptypes.ContainerMetrics) string {
+func (m *MonitoringServiceImpl) formatAlertMessage(rule *outlaptypes.AlertRule, metrics *outlaptypes.ContainerMetrics) string {
 	return fmt.Sprintf("Alert: %s triggered for container %s", rule.Name, metrics.ContainerName)
 }
 
 // sendAlertNotification sends an alert notification
-func (m *MonitoringServiceImpl) sendAlertNotification(alert *pulseuptypes.AlertEvent) {
+func (m *MonitoringServiceImpl) sendAlertNotification(alert *outlaptypes.AlertEvent) {
 	// Send via WebSocket if available
 	if m.wsManager != nil {
 		// Send container stopped alert specifically
@@ -622,44 +620,42 @@ func (m *MonitoringServiceImpl) sendAlertNotification(alert *pulseuptypes.AlertE
 		}
 	}
 
-	// Log the alert
-	m.logger.Info("Alert triggered", "alert", alert)
 }
 
 // setupDefaultAlertRules sets up default alert rules
 func (m *MonitoringServiceImpl) setupDefaultAlertRules() {
-	defaultRules := []pulseuptypes.AlertRule{
+	defaultRules := []outlaptypes.AlertRule{
 		{
 			ID:          "cpu-high",
 			Name:        "High CPU Usage",
 			Description: "Container CPU usage is above 80%",
-			MetricType:  pulseuptypes.AlertMetricTypeCPUUsage,
+			MetricType:  outlaptypes.AlertMetricTypeCPUUsage,
 			Threshold:   80.0,
-			Operator:    pulseuptypes.AlertOperatorGreaterThan,
+			Operator:    outlaptypes.AlertOperatorGreaterThan,
 			Duration:    5 * time.Minute,
-			Severity:    pulseuptypes.AlertSeverityWarning,
+			Severity:    outlaptypes.AlertSeverityWarning,
 			Enabled:     true,
 		},
 		{
 			ID:          "memory-high",
 			Name:        "High Memory Usage",
 			Description: "Container memory usage is above 90%",
-			MetricType:  pulseuptypes.AlertMetricTypeMemoryUsage,
+			MetricType:  outlaptypes.AlertMetricTypeMemoryUsage,
 			Threshold:   90.0,
-			Operator:    pulseuptypes.AlertOperatorGreaterThan,
+			Operator:    outlaptypes.AlertOperatorGreaterThan,
 			Duration:    3 * time.Minute,
-			Severity:    pulseuptypes.AlertSeverityError,
+			Severity:    outlaptypes.AlertSeverityError,
 			Enabled:     true,
 		},
 		{
 			ID:          "container-down",
 			Name:        "Container Down",
 			Description: "Container is not running",
-			MetricType:  pulseuptypes.AlertMetricTypeContainerDown,
+			MetricType:  outlaptypes.AlertMetricTypeContainerDown,
 			Threshold:   1.0,
-			Operator:    pulseuptypes.AlertOperatorEqual,
+			Operator:    outlaptypes.AlertOperatorEqual,
 			Duration:    1 * time.Minute,
-			Severity:    pulseuptypes.AlertSeverityCritical,
+			Severity:    outlaptypes.AlertSeverityCritical,
 			Enabled:     true,
 		},
 	}
@@ -671,7 +667,7 @@ func (m *MonitoringServiceImpl) setupDefaultAlertRules() {
 
 // setupDefaultLogFilters sets up default log filters
 func (m *MonitoringServiceImpl) setupDefaultLogFilters() {
-	defaultFilters := []pulseuptypes.LogFilter{
+	defaultFilters := []outlaptypes.LogFilter{
 		{
 			Name:     "error-patterns",
 			Patterns: []string{"ERROR", "FATAL", "Exception", "panic"},

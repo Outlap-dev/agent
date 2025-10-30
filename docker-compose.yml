@@ -19,7 +19,7 @@ services:
       - LOG_LEVEL=${LOG_LEVEL:-DEBUG}
       - LOG_FORMAT=text
       - CONFIG_PATH=${CONFIG_PATH:-}
-      - PULSEUP_CADDY_HOST_PATH=/etc/outlap-agent/caddy
+      - OUTLAP_CADDY_HOST_PATH=/etc/outlap-agent/caddy
       - DOCKER_SOCKET_PATH=${DOCKER_SOCKET_PATH:-/var/run/docker.sock}
     volumes:
       - ${DOCKER_SOCKET_PATH:-/var/run/docker.sock}:${DOCKER_SOCKET_PATH:-/var/run/docker.sock}
@@ -48,11 +48,11 @@ services:
       - outlap-network
     labels:
       - outlap.component=caddy
-      - outlap.deployment_uid=dep_pulseup_caddy
+      - outlap.deployment_uid=dep_outlap_caddy
       - outlap.lifecycle.final_name=outlap-caddy
       - outlap.lifecycle.version=1
       - outlap.managed=true
-      - outlap.service_uid=svc_pulseup_caddy
+      - outlap.service_uid=svc_outlap_caddy
 
 volumes:
   caddy_config:

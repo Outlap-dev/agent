@@ -557,19 +557,19 @@ type MonitoringConfig struct {
 
 // ContainerMetrics contains metrics for a specific container
 type ContainerMetrics struct {
-	ContainerID    string                  `json:"container_id"`
-	ContainerName  string                  `json:"container_name"`
-	Status         ServiceStatus           `json:"status"`
-	CPU            ContainerCPUMetrics     `json:"cpu"`
-	Memory         ContainerMemoryMetrics  `json:"memory"`
-	Network        ContainerNetworkMetrics `json:"network"`
-	Disk           ContainerDiskMetrics    `json:"disk"`
-	Health         HealthStatus            `json:"health"`
-	Uptime         time.Duration           `json:"uptime"`
-	ResponseTime   *ResponseTimeMetrics    `json:"response_time,omitempty"`
-	Labels         map[string]string       `json:"labels,omitempty"`
-	PulseUpManaged bool                    `json:"pulseup_managed"`
-	Timestamp      time.Time               `json:"timestamp"`
+	ContainerID   string                  `json:"container_id"`
+	ContainerName string                  `json:"container_name"`
+	Status        ServiceStatus           `json:"status"`
+	CPU           ContainerCPUMetrics     `json:"cpu"`
+	Memory        ContainerMemoryMetrics  `json:"memory"`
+	Network       ContainerNetworkMetrics `json:"network"`
+	Disk          ContainerDiskMetrics    `json:"disk"`
+	Health        HealthStatus            `json:"health"`
+	Uptime        time.Duration           `json:"uptime"`
+	ResponseTime  *ResponseTimeMetrics    `json:"response_time,omitempty"`
+	Labels        map[string]string       `json:"labels,omitempty"`
+	OutlapManaged bool                    `json:"outlap_managed"`
+	Timestamp     time.Time               `json:"timestamp"`
 }
 
 // ContainerCPUMetrics contains CPU metrics for a container

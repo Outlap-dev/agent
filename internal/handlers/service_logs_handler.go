@@ -3,7 +3,9 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -66,17 +68,70 @@ func (h *ServiceLogsHandler) Fetch(ctx context.Context, data json.RawMessage) (*
 	// Resolve the active container for the service
 	activeContainer, err := h.resolveActiveContainer(ctx, request.ServiceUID)
 	if err != nil {
-		h.logger.Error("Failed to resolve active container", "service_uid", request.ServiceUID, "error", err)
-		return &types.CommandResponse{
-			Success: false,
-			Error:   err.Error(),
-		}, nil
+		if !errors.Is(err, ErrNoActiveContainer) {
+			h.logger.Error("Failed to resolve active container", "service_uid", request.ServiceUID, "error", err)
+			return &types.CommandResponse{
+				Success: false,
+				Error:   err.Error(),
+			}, nil
+		}
+
+		deploymentSvc := h.services.GetDeploymentService()
+		if deploymentSvc == nil {
+			h.logger.Error("Deployment service unavailable while fetching historical logs", "service_uid", request.ServiceUID)
+			return &types.CommandResponse{
+				Success: false,
+				Error:   "deployment service unavailable",
+			}, nil
+		}
+
+		containers, listErr := deploymentSvc.ListServiceContainers(ctx, request.ServiceUID)
+		if listErr != nil {
+			h.logger.Error("Failed to list containers for historical logs", "service_uid", request.ServiceUID, "error", listErr)
+			return &types.CommandResponse{
+				Success: false,
+				Error:   "failed to resolve container for historical logs: " + listErr.Error(),
+			}, nil
+		}
+
+		for _, container := range containers {
+			if strings.Contains(strings.ToLower(container.Name), "-candidate") {
+				continue
+			}
+			instance := container
+			activeContainer = &instance
+			break
+		}
+
+		if activeContainer == nil && len(containers) > 0 {
+			instance := containers[0]
+			activeContainer = &instance
+		}
+
+		if activeContainer == nil {
+			h.logger.Warn("No containers available for historical logs", "service_uid", request.ServiceUID)
+			return &types.CommandResponse{
+				Success: false,
+				Error:   "no containers available for historical logs",
+			}, nil
+		}
+
+		h.logger.Info("Using latest container for historical logs", "service_uid", request.ServiceUID, "container", activeContainer.Name, "state", activeContainer.State)
 	}
 
 	containerName := activeContainer.Name
 
 	// Get container logs
-	logs, err := h.services.GetDockerService().GetContainerLogsByName(ctx, containerName)
+	dockerService := h.services.GetDockerService()
+	if dockerService == nil {
+		h.logger.Error("Docker service unavailable while fetching historical logs", "service_uid", request.ServiceUID)
+		return &types.CommandResponse{
+			Success: false,
+			Error:   "docker service unavailable",
+		}, nil
+	}
+
+	logs, err := dockerService.GetContainerLogsByName(ctx, containerName)
 	if err != nil {
 		h.logger.Error("Failed to get container logs", "error", err, "container_name", containerName)
 		return &types.CommandResponse{

@@ -17,7 +17,7 @@ import (
 	"github.com/docker/docker/errdefs"
 
 	"outlap-agent-go/pkg/logger"
-	pulseuptypes "outlap-agent-go/pkg/types"
+	outlaptypes "outlap-agent-go/pkg/types"
 )
 
 // DockerStats represents the structure returned by Docker stats API
@@ -109,7 +109,7 @@ func (d *DockerServiceImpl) ensureClient() error {
 }
 
 // ListContainers returns a list of all containers
-func (d *DockerServiceImpl) ListContainers(ctx context.Context) ([]pulseuptypes.ServiceInfo, error) {
+func (d *DockerServiceImpl) ListContainers(ctx context.Context) ([]outlaptypes.ServiceInfo, error) {
 	if err := d.ensureClient(); err != nil {
 		return nil, err
 	}
@@ -121,19 +121,19 @@ func (d *DockerServiceImpl) ListContainers(ctx context.Context) ([]pulseuptypes.
 		return nil, fmt.Errorf("failed to list containers: %w", err)
 	}
 
-	var services []pulseuptypes.ServiceInfo
+	var services []outlaptypes.ServiceInfo
 	for _, cont := range containers {
 		// Extract service info from container
 		serviceName := cont.Names[0]
 		serviceName = strings.TrimPrefix(serviceName, "/")
 
-		status := pulseuptypes.ServiceStatusStopped
+		status := outlaptypes.ServiceStatusStopped
 		if cont.State == "running" {
-			status = pulseuptypes.ServiceStatusRunning
+			status = outlaptypes.ServiceStatusRunning
 		} else if cont.State == "exited" {
-			status = pulseuptypes.ServiceStatusStopped
+			status = outlaptypes.ServiceStatusStopped
 		} else if cont.State == "restarting" {
-			status = pulseuptypes.ServiceStatusRestarting
+			status = outlaptypes.ServiceStatusRestarting
 		}
 
 		// Extract port if available
@@ -142,7 +142,7 @@ func (d *DockerServiceImpl) ListContainers(ctx context.Context) ([]pulseuptypes.
 			port = int(cont.Ports[0].PublicPort)
 		}
 
-		services = append(services, pulseuptypes.ServiceInfo{
+		services = append(services, outlaptypes.ServiceInfo{
 			UID:       cont.ID[:12], // Use short container ID
 			Name:      serviceName,
 			Status:    status,
@@ -338,29 +338,29 @@ func (d *DockerServiceImpl) StreamContainerLogs(ctx context.Context, serviceUID 
 
 	return logChan, nil
 }
-func (d *DockerServiceImpl) GetContainerStatus(ctx context.Context, serviceUID string) (pulseuptypes.ServiceStatus, error) {
+func (d *DockerServiceImpl) GetContainerStatus(ctx context.Context, serviceUID string) (outlaptypes.ServiceStatus, error) {
 	if err := d.ensureClient(); err != nil {
-		return pulseuptypes.ServiceStatusStopped, err
+		return outlaptypes.ServiceStatusStopped, err
 	}
 
 	d.logger.Debug("Getting container status", "service_uid", serviceUID)
 
 	containerJSON, err := d.client.ContainerInspect(ctx, serviceUID)
 	if err != nil {
-		return pulseuptypes.ServiceStatusStopped, fmt.Errorf("failed to inspect container %s: %w", serviceUID, err)
+		return outlaptypes.ServiceStatusStopped, fmt.Errorf("failed to inspect container %s: %w", serviceUID, err)
 	}
 
 	switch containerJSON.State.Status {
 	case "running":
-		return pulseuptypes.ServiceStatusRunning, nil
+		return outlaptypes.ServiceStatusRunning, nil
 	case "exited":
-		return pulseuptypes.ServiceStatusStopped, nil
+		return outlaptypes.ServiceStatusStopped, nil
 	case "restarting":
-		return pulseuptypes.ServiceStatusRestarting, nil
+		return outlaptypes.ServiceStatusRestarting, nil
 	case "paused":
-		return pulseuptypes.ServiceStatusStopped, nil
+		return outlaptypes.ServiceStatusStopped, nil
 	default:
-		return pulseuptypes.ServiceStatusStopped, nil
+		return outlaptypes.ServiceStatusStopped, nil
 	}
 }
 
@@ -388,7 +388,7 @@ func (d *DockerServiceImpl) RemoveContainer(ctx context.Context, serviceUID stri
 }
 
 // ExecContainer executes a command inside a container
-func (d *DockerServiceImpl) ExecContainer(ctx context.Context, containerID string, cmd []string) (*pulseuptypes.ExecResult, error) {
+func (d *DockerServiceImpl) ExecContainer(ctx context.Context, containerID string, cmd []string) (*outlaptypes.ExecResult, error) {
 	if err := d.ensureClient(); err != nil {
 		return nil, err
 	}
@@ -430,7 +430,7 @@ func (d *DockerServiceImpl) ExecContainer(ctx context.Context, containerID strin
 		return nil, fmt.Errorf("failed to inspect exec instance: %w", err)
 	}
 
-	result := &pulseuptypes.ExecResult{
+	result := &outlaptypes.ExecResult{
 		ExitCode: inspectResp.ExitCode,
 		Output:   string(output),
 	}
@@ -756,7 +756,7 @@ func (d *DockerServiceImpl) CleanupOldDeploymentImages(ctx context.Context, serv
 }
 
 // GetContainerStats gets live statistics for a specific container using Docker stats API
-func (d *DockerServiceImpl) GetContainerStats(ctx context.Context, containerID string) (*pulseuptypes.ContainerMetrics, error) {
+func (d *DockerServiceImpl) GetContainerStats(ctx context.Context, containerID string) (*outlaptypes.ContainerMetrics, error) {
 	if err := d.ensureClient(); err != nil {
 		return nil, err
 	}
@@ -802,10 +802,10 @@ func (d *DockerServiceImpl) GetContainerStats(ctx context.Context, containerID s
 	}
 
 	// Create container metrics
-	containerMetrics := &pulseuptypes.ContainerMetrics{
+	containerMetrics := &outlaptypes.ContainerMetrics{
 		ContainerID:   containerID,
 		ContainerName: cleanName,
-		Status:        pulseuptypes.FromDockerStatus(inspect.State.Status),
+		Status:        outlaptypes.FromDockerStatus(inspect.State.Status),
 		CPU:           cpuMetrics,
 		Memory:        memoryMetrics,
 		Network:       networkMetrics,
@@ -840,7 +840,7 @@ func (d *DockerServiceImpl) InspectContainer(ctx context.Context, containerID st
 }
 
 // calculateCPUMetrics calculates CPU metrics from Docker stats
-func (d *DockerServiceImpl) calculateCPUMetrics(stats *DockerStats) pulseuptypes.ContainerCPUMetrics {
+func (d *DockerServiceImpl) calculateCPUMetrics(stats *DockerStats) outlaptypes.ContainerCPUMetrics {
 	var cpuPercent float64
 	var throttled uint64
 	var limit float64
@@ -884,7 +884,7 @@ func (d *DockerServiceImpl) calculateCPUMetrics(stats *DockerStats) pulseuptypes
 		}
 	}
 
-	return pulseuptypes.ContainerCPUMetrics{
+	return outlaptypes.ContainerCPUMetrics{
 		Usage:     cpuPercent,
 		Throttled: throttled,
 		Limit:     limit,
@@ -892,7 +892,7 @@ func (d *DockerServiceImpl) calculateCPUMetrics(stats *DockerStats) pulseuptypes
 }
 
 // calculateMemoryMetrics calculates memory metrics from Docker stats
-func (d *DockerServiceImpl) calculateMemoryMetrics(stats *DockerStats) pulseuptypes.ContainerMemoryMetrics {
+func (d *DockerServiceImpl) calculateMemoryMetrics(stats *DockerStats) outlaptypes.ContainerMemoryMetrics {
 	usage := stats.MemoryStats.Usage
 	limit := stats.MemoryStats.Limit
 
@@ -906,7 +906,7 @@ func (d *DockerServiceImpl) calculateMemoryMetrics(stats *DockerStats) pulseupty
 		percent = (float64(usage) / float64(limit)) * 100.0
 	}
 
-	return pulseuptypes.ContainerMemoryMetrics{
+	return outlaptypes.ContainerMemoryMetrics{
 		Usage:   usage,
 		Limit:   limit,
 		Percent: percent,
@@ -916,7 +916,7 @@ func (d *DockerServiceImpl) calculateMemoryMetrics(stats *DockerStats) pulseupty
 }
 
 // calculateNetworkMetrics calculates network metrics from Docker stats
-func (d *DockerServiceImpl) calculateNetworkMetrics(stats *DockerStats) pulseuptypes.ContainerNetworkMetrics {
+func (d *DockerServiceImpl) calculateNetworkMetrics(stats *DockerStats) outlaptypes.ContainerNetworkMetrics {
 	var rxBytes, txBytes, rxPackets, txPackets, rxErrors, txErrors uint64
 
 	// Sum up all network interfaces
@@ -929,7 +929,7 @@ func (d *DockerServiceImpl) calculateNetworkMetrics(stats *DockerStats) pulseupt
 		txErrors += network.TxErrors
 	}
 
-	return pulseuptypes.ContainerNetworkMetrics{
+	return outlaptypes.ContainerNetworkMetrics{
 		RxBytes:   rxBytes,
 		TxBytes:   txBytes,
 		RxPackets: rxPackets,
@@ -940,7 +940,7 @@ func (d *DockerServiceImpl) calculateNetworkMetrics(stats *DockerStats) pulseupt
 }
 
 // calculateDiskMetrics calculates disk I/O metrics from Docker stats
-func (d *DockerServiceImpl) calculateDiskMetrics(stats *DockerStats) pulseuptypes.ContainerDiskMetrics {
+func (d *DockerServiceImpl) calculateDiskMetrics(stats *DockerStats) outlaptypes.ContainerDiskMetrics {
 	var readBytes, writeBytes, readOps, writeOps uint64
 
 	// Sum up all block devices
@@ -960,7 +960,7 @@ func (d *DockerServiceImpl) calculateDiskMetrics(stats *DockerStats) pulseuptype
 		}
 	}
 
-	return pulseuptypes.ContainerDiskMetrics{
+	return outlaptypes.ContainerDiskMetrics{
 		ReadBytes:  readBytes,
 		WriteBytes: writeBytes,
 		ReadOps:    readOps,
@@ -969,19 +969,19 @@ func (d *DockerServiceImpl) calculateDiskMetrics(stats *DockerStats) pulseuptype
 }
 
 // determineHealthStatus determines the health status of a container
-func (d *DockerServiceImpl) determineHealthStatus(inspect *dockertypes.ContainerJSON) pulseuptypes.HealthStatus {
+func (d *DockerServiceImpl) determineHealthStatus(inspect *dockertypes.ContainerJSON) outlaptypes.HealthStatus {
 	if inspect.State.Health == nil {
-		return pulseuptypes.HealthStatusNone
+		return outlaptypes.HealthStatusNone
 	}
 
 	switch inspect.State.Health.Status {
 	case "healthy":
-		return pulseuptypes.HealthStatusHealthy
+		return outlaptypes.HealthStatusHealthy
 	case "unhealthy":
-		return pulseuptypes.HealthStatusUnhealthy
+		return outlaptypes.HealthStatusUnhealthy
 	case "starting":
-		return pulseuptypes.HealthStatusStarting
+		return outlaptypes.HealthStatusStarting
 	default:
-		return pulseuptypes.HealthStatusNone
+		return outlaptypes.HealthStatusNone
 	}
 }

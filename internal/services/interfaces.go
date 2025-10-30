@@ -152,6 +152,12 @@ type ContainerEventService interface {
 	SetWebSocketManager(wsManager wscontracts.Emitter)
 }
 
+// PeriodicStatusCheckerService handles periodic status checking of outlap-managed containers
+type PeriodicStatusCheckerService interface {
+	Start(ctx context.Context) error
+	Stop(ctx context.Context) error
+}
+
 // StatusService handles service and deployment status updates
 type StatusService interface {
 	UpdateServiceStatus(ctx context.Context, serviceUID string, status types.ServiceStatus, errorMessage string) error

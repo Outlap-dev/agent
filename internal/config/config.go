@@ -13,7 +13,7 @@ var (
 	GitCommit = ""
 )
 
-const versionEnvKey = "PULSEUP_AGENT_VERSION"
+const versionEnvKey = "OUTLAP_AGENT_VERSION"
 
 // Config holds the application configuration
 type Config struct {
@@ -80,7 +80,7 @@ func Load() (*Config, error) {
 		// mTLS and enrollment configuration
 		CertDir:     getEnv("CERT_DIR", "/var/lib/outlap/certs"),
 		JoinToken:   getEnv("JOIN_TOKEN", ""),
-		SocketGroup: getEnv("PULSEUP_AGENT_GROUP", "outlap"),
+		SocketGroup: getEnv("OUTLAP_AGENT_GROUP", "outlap"),
 	}
 
 	// Validate required fields
