@@ -5,7 +5,6 @@ import (
 	"compress/gzip"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"math/rand"
@@ -29,9 +28,6 @@ type updateService struct {
 	commandService   CommandService
 	httpClient       *http.Client
 	validator        *update.Validator
-	repoOwner        string
-	repoName         string
-	apiBaseURL       string
 	rand             *rand.Rand
 	loopMu           sync.Mutex
 	stopChan         chan struct{}
@@ -39,39 +35,11 @@ type updateService struct {
 	lastETag         string // ETag from backend manifest for caching
 }
 
-const githubAPIBase = "https://api.github.com"
-
-var (
-	errGitHubRateLimited = errors.New("github api rate limit exceeded")
-	errNoMatchingAsset   = errors.New("no matching release asset found for current platform")
-)
-
-type githubTag struct {
-	Name string `json:"name"`
-}
-
-type githubRelease struct {
-	TagName     string               `json:"tag_name"`
-	Body        string               `json:"body"`
-	HTMLURL     string               `json:"html_url"`
-	PublishedAt *time.Time           `json:"published_at"`
-	Assets      []githubReleaseAsset `json:"assets"`
-}
-
-type githubReleaseAsset struct {
-	Name               string `json:"name"`
-	BrowserDownloadURL string `json:"browser_download_url"`
-}
 
 func NewUpdateService(cfg *config.Config, logger *logger.Logger, commandService CommandService) UpdateService {
 	validator, err := update.NewValidator(cfg.UpdatePublicKeyPath)
 	if err != nil {
 		logger.Error("Failed to initialize update validator", "error", err)
-	}
-
-	owner, repo, repoErr := parseRepositoryIdentifier(cfg.UpdateRepository)
-	if repoErr != nil {
-		logger.Error("Invalid update repository", "repository", cfg.UpdateRepository, "error", repoErr)
 	}
 
 	if err := update.SetCurrentVersionFromString(config.GetVersionString()); err != nil {
@@ -86,29 +54,26 @@ func NewUpdateService(cfg *config.Config, logger *logger.Logger, commandService 
 			Timeout: 30 * time.Second,
 		},
 		validator:  validator,
-		repoOwner:  owner,
-		repoName:   repo,
-		apiBaseURL: githubAPIBase,
 		rand:       rand.New(rand.NewSource(time.Now().UnixNano())),
 	}
 }
 
 func (s *updateService) CheckForUpdate(ctx context.Context) (*types.UpdateMetadata, error) {
-	// If backend manifest URL is configured, use it instead of GitHub
-	if s.config.UpdateManifestURL != "" {
-		return s.checkForUpdateFromBackend(ctx)
+	// Construct manifest URL from APIBaseURL (same URL used for registration)
+	if s.config.APIBaseURL == "" {
+		return nil, fmt.Errorf("API base URL not configured")
 	}
-
-	// Fall back to GitHub direct access (legacy method)
-	return s.checkForUpdateFromGitHub(ctx)
+	
+	manifestURL := s.config.APIBaseURL + "/api/agent/updates/manifest"
+	return s.checkForUpdateFromBackend(ctx, manifestURL)
 }
 
 // checkForUpdateFromBackend checks for updates using the backend manifest endpoint
-func (s *updateService) checkForUpdateFromBackend(ctx context.Context) (*types.UpdateMetadata, error) {
+func (s *updateService) checkForUpdateFromBackend(ctx context.Context, manifestURL string) (*types.UpdateMetadata, error) {
 	currentVersion := update.GetCurrentVersion()
-	s.logger.Info("Checking for updates from backend", "current", currentVersion.String(), "url", s.config.UpdateManifestURL)
+	s.logger.Info("Checking for updates from backend", "current", currentVersion.String(), "url", manifestURL)
 
-	metadata, err := s.fetchBackendManifest(ctx)
+	metadata, err := s.fetchBackendManifest(ctx, manifestURL)
 	if err != nil {
 		s.logger.Error("Failed to fetch update manifest from backend", "error", err)
 		return nil, err
@@ -129,231 +94,9 @@ func (s *updateService) checkForUpdateFromBackend(ctx context.Context) (*types.U
 	return metadata, nil
 }
 
-// checkForUpdateFromGitHub checks for updates using GitHub directly (legacy method)
-func (s *updateService) checkForUpdateFromGitHub(ctx context.Context) (*types.UpdateMetadata, error) {
-	if s.repoOwner == "" || s.repoName == "" {
-		return nil, fmt.Errorf("update repository not configured")
-	}
-
-	currentVersion := update.GetCurrentVersion()
-	s.logger.Info("Checking for updates from GitHub", "current", currentVersion.String())
-
-	latestTag, err := s.fetchLatestTag(ctx)
-	if err != nil {
-		if errors.Is(err, errGitHubRateLimited) {
-			s.logger.Warn("GitHub rate limit reached while checking for updates")
-			return nil, nil
-		}
-		return nil, err
-	}
-
-	latestVersion, err := update.ParseVersion(latestTag)
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse latest version '%s': %w", latestTag, err)
-	}
-
-	if !currentVersion.LessThan(latestVersion) {
-		s.logger.Info("Agent is up to date", "current", currentVersion.String(), "latest", latestVersion.String())
-		return nil, nil
-	}
-
-	metadata, err := s.prepareUpdateMetadata(ctx, latestTag, latestVersion)
-	if err != nil {
-		return nil, err
-	}
-
-	s.logger.Info("Update available", "current", currentVersion.String(), "latest", latestVersion.String())
-	return metadata, nil
-}
-
-func (s *updateService) fetchLatestTag(ctx context.Context) (string, error) {
-	base := s.apiBaseURL
-	if base == "" {
-		base = githubAPIBase
-	}
-	url := fmt.Sprintf("%s/repos/%s/%s/tags?per_page=1", base, s.repoOwner, s.repoName)
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	if err != nil {
-		return "", fmt.Errorf("failed to create GitHub tag request: %w", err)
-	}
-
-	s.decorateRequest(req, "")
-
-	resp, err := s.httpClient.Do(req)
-	if err != nil {
-		return "", fmt.Errorf("failed to fetch tags from GitHub: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return "", s.githubAPIError(resp)
-	}
-
-	var tags []githubTag
-	if err := json.NewDecoder(resp.Body).Decode(&tags); err != nil {
-		return "", fmt.Errorf("failed to decode GitHub tags response: %w", err)
-	}
-
-	if len(tags) == 0 {
-		return "", fmt.Errorf("no tags found in repository %s/%s", s.repoOwner, s.repoName)
-	}
-
-	return tags[0].Name, nil
-}
-
-func (s *updateService) fetchReleaseByTag(ctx context.Context, tag string) (*githubRelease, error) {
-	base := s.apiBaseURL
-	if base == "" {
-		base = githubAPIBase
-	}
-	url := fmt.Sprintf("%s/repos/%s/%s/releases/tags/%s", base, s.repoOwner, s.repoName, tag)
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create GitHub release request: %w", err)
-	}
-
-	s.decorateRequest(req, "")
-
-	resp, err := s.httpClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("failed to fetch release from GitHub: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, s.githubAPIError(resp)
-	}
-
-	var release githubRelease
-	if err := json.NewDecoder(resp.Body).Decode(&release); err != nil {
-		return nil, fmt.Errorf("failed to decode GitHub release response: %w", err)
-	}
-
-	return &release, nil
-}
-
-func (s *updateService) prepareUpdateMetadata(ctx context.Context, tag string, latestVersion update.Version) (*types.UpdateMetadata, error) {
-	release, err := s.fetchReleaseByTag(ctx, tag)
-	if err != nil {
-		return nil, err
-	}
-
-	artifactName := s.artifactName()
-	binaryAsset, checksumAsset, signatureAsset := findReleaseAssets(artifactName, release.Assets)
-	if binaryAsset == nil || checksumAsset == nil || signatureAsset == nil {
-		return nil, fmt.Errorf("%w (%s)", errNoMatchingAsset, artifactName)
-	}
-
-	manifest, err := s.downloadTextAsset(ctx, *checksumAsset)
-	if err != nil {
-		return nil, fmt.Errorf("failed to download checksum manifest: %w", err)
-	}
-	originalManifest := manifest
-	manifest = strings.TrimSpace(manifest)
-	if manifest == "" {
-		return nil, fmt.Errorf("checksum manifest is empty")
-	}
-
-	signature, err := s.downloadTextAsset(ctx, *signatureAsset)
-	if err != nil {
-		return nil, fmt.Errorf("failed to download checksum signature: %w", err)
-	}
-	signature = strings.TrimSpace(signature)
-	if signature == "" {
-		return nil, fmt.Errorf("checksum signature is empty")
-	}
-
-	validator, err := s.ensureValidator()
-	if err != nil {
-		return nil, fmt.Errorf("failed to initialize validator: %w", err)
-	}
-
-	if err := validator.VerifySignature([]byte(originalManifest), signature); err != nil {
-		return nil, fmt.Errorf("checksum signature verification failed: %w", err)
-	}
-
-	checksum, err := update.ParseChecksumManifest(manifest)
-	if err != nil {
-		return nil, err
-	}
-
-	metadata := &types.UpdateMetadata{
-		Version:          latestVersion.String(),
-		DownloadURL:      binaryAsset.BrowserDownloadURL,
-		SHA256:           checksum,
-		Signature:        signature,
-		ChecksumManifest: originalManifest,
-		Changelog:        release.Body,
-	}
-
-	if release.HTMLURL != "" {
-		metadata.ReleaseURL = release.HTMLURL
-	}
-	if release.PublishedAt != nil {
-		metadata.SignedAt = *release.PublishedAt
-	}
-
-	return metadata, nil
-}
-
-func (s *updateService) downloadTextAsset(ctx context.Context, asset githubReleaseAsset) (string, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, asset.BrowserDownloadURL, nil)
-	if err != nil {
-		return "", fmt.Errorf("failed to create asset request for %s: %w", asset.Name, err)
-	}
-
-	s.decorateRequest(req, "application/octet-stream")
-
-	resp, err := s.httpClient.Do(req)
-	if err != nil {
-		return "", fmt.Errorf("failed to download asset %s: %w", asset.Name, err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return "", s.githubAPIError(resp)
-	}
-
-	content, err := io.ReadAll(io.LimitReader(resp.Body, 1<<16))
-	if err != nil {
-		return "", fmt.Errorf("failed to read asset %s: %w", asset.Name, err)
-	}
-
-	return string(content), nil
-}
-
-func (s *updateService) githubAPIError(resp *http.Response) error {
-	if resp.StatusCode == http.StatusForbidden && resp.Header.Get("X-RateLimit-Remaining") == "0" {
-		return errGitHubRateLimited
-	}
-
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
-	message := strings.TrimSpace(string(body))
-	if message == "" {
-		return fmt.Errorf("github api returned status %d", resp.StatusCode)
-	}
-	return fmt.Errorf("github api returned status %d: %s", resp.StatusCode, message)
-}
-
+// artifactName returns the platform-specific artifact name for GitHub downloads
 func (s *updateService) artifactName() string {
 	return fmt.Sprintf("outlap-agent_%s_%s", runtime.GOOS, runtime.GOARCH)
-}
-
-func findReleaseAssets(baseName string, assets []githubReleaseAsset) (binary, checksum, signature *githubReleaseAsset) {
-	checksumName := baseName + ".sha256"
-	signatureName := checksumName + ".sig"
-	for idx := range assets {
-		asset := &assets[idx]
-		switch asset.Name {
-		case baseName:
-			binary = asset
-		case checksumName:
-			checksum = asset
-		case signatureName:
-			signature = asset
-		}
-	}
-	return
 }
 
 func (s *updateService) ensureValidator() (*update.Validator, error) {
@@ -378,25 +121,6 @@ func (s *updateService) decorateRequest(req *http.Request, accept string) {
 	req.Header.Set("User-Agent", fmt.Sprintf("Outlap-Agent-Go/%s", config.GetVersionString()))
 }
 
-func parseRepositoryIdentifier(repo string) (string, string, error) {
-	repo = strings.TrimSpace(repo)
-	if repo == "" {
-		return "", "", fmt.Errorf("repository string is empty")
-	}
-
-	parts := strings.Split(repo, "/")
-	if len(parts) != 2 {
-		return "", "", fmt.Errorf("invalid repository identifier: %s", repo)
-	}
-
-	owner := strings.TrimSpace(parts[0])
-	name := strings.TrimSpace(parts[1])
-	if owner == "" || name == "" {
-		return "", "", fmt.Errorf("invalid repository identifier: %s", repo)
-	}
-
-	return owner, name, nil
-}
 
 func (s *updateService) DownloadUpdate(ctx context.Context, metadata *types.UpdateMetadata) (string, error) {
 	if metadata == nil {
@@ -631,25 +355,19 @@ func (s *updateService) runAutoUpdateLoop(ctx context.Context, stop <-chan struc
 func (s *updateService) computeNextInterval() time.Duration {
 	intervalHours := s.config.UpdateIntervalHours
 	if intervalHours <= 0 {
-		// Use different defaults for backend vs GitHub polling
-		if s.config.UpdateManifestURL != "" {
-			// Backend polling: 5-10 minutes with jitter
-			base := 7 * time.Minute         // 7 minutes base
-			jitterWindow := 3 * time.Minute // ±3 minutes jitter (5-10 minute range)
+		// Backend polling: 5-10 minutes with jitter
+		base := 7 * time.Minute         // 7 minutes base
+		jitterWindow := 3 * time.Minute // ±3 minutes jitter (5-10 minute range)
 
-			var jitter time.Duration
-			if s.rand != nil {
-				rangeN := int64(jitterWindow * 2)
-				if rangeN > 0 {
-					jitter = time.Duration(s.rand.Int63n(rangeN)) - jitterWindow
-				}
+		var jitter time.Duration
+		if s.rand != nil {
+			rangeN := int64(jitterWindow * 2)
+			if rangeN > 0 {
+				jitter = time.Duration(s.rand.Int63n(rangeN)) - jitterWindow
 			}
-
-			return base + jitter
-		} else {
-			// GitHub polling: 5 minutes minimum to avoid rate limits
-			return 5 * time.Minute
 		}
+
+		return base + jitter
 	}
 
 	base := time.Duration(intervalHours) * time.Hour
@@ -754,8 +472,8 @@ func (s *updateService) extractArchive(archivePath, destDir string) error {
 }
 
 // fetchBackendManifest fetches the update manifest from the backend endpoint
-func (s *updateService) fetchBackendManifest(ctx context.Context) (*types.UpdateMetadata, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, s.config.UpdateManifestURL, nil)
+func (s *updateService) fetchBackendManifest(ctx context.Context, manifestURL string) (*types.UpdateMetadata, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, manifestURL, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create backend manifest request: %w", err)
 	}

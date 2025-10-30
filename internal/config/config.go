@@ -43,7 +43,6 @@ type Config struct {
 	UpdatePublicKeyPath string
 	UpdateRepository    string
 	UpdateRequestPath   string
-	UpdateManifestURL   string
 
 	// mTLS and enrollment configuration
 	CertDir     string
@@ -77,7 +76,6 @@ func Load() (*Config, error) {
 		UpdatePublicKeyPath:          getEnv("UPDATE_PUBLIC_KEY_PATH", "/etc/outlap-agent/update_public.pem"),
 		UpdateRepository:             resolveUpdateRepository(),
 		UpdateRequestPath:            getEnv("UPDATE_REQUEST_PATH", "/run/outlap/update.request"),
-		UpdateManifestURL:            getEnv("UPDATE_MANIFEST_URL", ""),
 
 		// mTLS and enrollment configuration
 		CertDir:     getEnv("CERT_DIR", "/var/lib/outlap/certs"),
