@@ -1,243 +1,63 @@
 # Outlap Agent
 
-A high-performance, containerized agent for the Outlap platform, rewritten from Python to Go. Uses native WebSockets for real-time communication with Outlap servers to manage applications, databases, and infrastructure.
+The Outlap Agent is a high-performance, containerized agent for the Outlap platform. It provides real-time communication with Outlap servers to manage applications, databases, and infrastructure on your servers.
 
-## Architecture
+## Installation
 
-The Go agent follows a clean architecture pattern with the following structure:
+### Automated Installation (Recommended)
 
-```
-outlap-agent/
-├── cmd/
-│   └── agent/           # Outlap agent entry point
-├── internal/
-│   ├── config/          # Configuration management  
-│   ├── worker/          # Agent service container
-│   ├── services/        # Business logic services
-│   ├── handlers/        # Command handlers
-│   ├── websocket/       # Modular WebSocket client architecture
-│   └── testws/          # Test WebSocket server
-├── pkg/
-│   ├── types/           # Shared types and structures
-│   └── logger/          # Structured logging with slog
-├── docs/                # Documentation
-├── scripts/             # Build and deployment scripts
-└── go.mod
-```
+The easiest way to install the Outlap Agent is using our installation script:
 
-## Key Improvements over Python Version
-
-1. **Native WebSockets**: Uses Gorilla WebSocket instead of Socket.IO for better performance and simpler protocol
-2. **Structured Logging**: Uses Go's structured logging with JSON output
-3. **Type Safety**: Strong typing throughout the application
-4. **Dependency Injection**: Clean service container pattern for managing dependencies
-5. **Graceful Shutdown**: Proper context-based shutdown handling
-6. **Interface-based Design**: All services implement interfaces for better testability
-
-## Services
-
-### Core Services
-- **WebSocket Manager**: Handles WebSocket connections with automatic reconnection
-- **Service Container**: Manages all services and their dependencies
-- **Handler Registry**: Routes commands to appropriate handlers
-
-### Business Services
-- **Docker Service**: Container management operations
-- **Git Service**: Repository cloning and management
-- **Build Service**: Application building and deployment
-- **System Service**: Hardware info and system metrics
-- **Database Service**: Provisioning, backups, and restores for MySQL, PostgreSQL, MariaDB, Redis, and MongoDB
-- **Caddy Service**: Reverse proxy and SSL management (planned)
-
-## Configuration
-
-The agent supports configuration via environment variables or config files:
-
-- `.env` file (for local development)
-- `/etc/outlap-agent/config` (for production)
-
-Required environment variables:
-- `WEBSOCKET_URL`: WebSocket server URL (default: `ws://ws.outlap.dev/ws/agent`)
-- `JOIN_TOKEN`: One-time enrollment token for obtaining mTLS certificates (only needed for initial enrollment)
-
-Optional auto-reconnection settings:
-- `RECONNECT_ENABLED`: Enable automatic reconnection (default: `true`)
-- `RECONNECT_INTERVAL`: Initial reconnection delay in seconds (default: `5`)
-- `RECONNECT_MAX_ATTEMPTS`: Maximum reconnection attempts, 0 for infinite (default: `0`)
-- `RECONNECT_BACKOFF_MAX`: Maximum backoff delay in seconds (default: `60`)
-
-Database backup configuration:
-- `OUTLAP_BACKUP_DIR`: Override the default `/var/lib/outlap/backups` directory where database backups (including MongoDB archives) are stored on the agent
-
-## Building and Running
-
-### Prerequisites
-- Docker and Docker Compose
-- Go 1.23 or later (for local development)
-- Git (for repository operations)
-
-### Quick Start
-
-#### Using Docker Compose (Recommended)
 ```bash
-# Start development environment (equivalent to old 'make dev')
-docker-compose up --build
-
-# Start with debugging (equivalent to old 'make dev-debug')
-docker-compose -f docker-compose.debug.yml up --build
-
-# Stop services
-docker-compose down
-
-# View logs
-docker-compose logs -f outlap-agent
+curl -fsSL https://get.outlap.dev/install.sh | sudo bash
 ```
 
-#### Local Development
-```bash
-# Build the agent locally
-go build -o outlap-agent ./cmd/agent
+The installer will:
+- Download and verify the latest signed binary for your architecture
+- Set up the agent as a systemd service
+- Configure automatic updates
+- Create the necessary directories and permissions
 
-# Run tests
-./test.sh
-```
+### Manual Installation
 
-#### Configuration
-Create a `.env` file for local development:
-```bash
-# Example .env file
-WEBSOCKET_URL=ws://your-server.com/ws/agent_v2
-JOIN_TOKEN=your-join-token
-LOG_LEVEL=DEBUG
-CADDY_HTTP_PORT=8080
-CADDY_HTTPS_PORT=8443
-```
+If you prefer to install manually:
 
-#### Environment Variables
-- `WEBSOCKET_URL`: WebSocket server URL (default: `ws://host.docker.internal:3000/ws/agent_v2`)
-- `JOIN_TOKEN`: One-time enrollment token (default: `test-token`)
-- `LOG_LEVEL`: Debug level (default: `DEBUG`)
-- `CADDY_HTTP_PORT`: HTTP port for Caddy (default: `8080`)
-- `CADDY_HTTPS_PORT`: HTTPS port for Caddy (default: `8443`)
+1. Download the latest release for your architecture:
+   - **Linux AMD64**: `outlap-agent_linux_amd64`
+   - **Linux ARM64**: `outlap-agent_linux_arm64`
 
-## Development
+2. Verify the download (recommended):
+   ```bash
+   # Download the checksum and signature files
+   # Verify the signature using the Outlap public key
+   sha256sum -c outlap-agent_linux_amd64.sha256
+   ```
 
-### Adding New Handlers
+3. Install the binary:
+   ```bash
+   sudo mv outlap-agent_linux_amd64 /usr/local/bin/outlap-agent
+   sudo chmod +x /usr/local/bin/outlap-agent
+   ```
 
-1. Create a new handler in `internal/handlers/`:
+4. Create the agent user and directories:
+   ```bash
+   sudo useradd -r -s /bin/false outlap
+   sudo mkdir -p /etc/outlap-agent /opt/outlap /var/lib/outlap /var/log/outlap /run/outlap
+   sudo chown outlap:outlap /opt/outlap /var/lib/outlap /var/log/outlap /run/outlap
+   ```
 
-```go
-package handlers
+5. Create the configuration file at `/etc/outlap-agent/config`:
+   ```ini
+   WEBSOCKET_URL=wss://ws.outlap.dev/ws/agent
+   JOIN_TOKEN=your-join-token-from-outlap-dashboard
+   LOG_LEVEL=INFO
+   ```
 
-import (
-    "context"
-    "encoding/json"
-    "outlap-agent-go/pkg/types"
-)
+6. Set up the systemd service (see systemd configuration below)
 
-type MyHandler struct {
-    *BaseHandler
-}
+### Systemd Configuration
 
-func NewMyHandler(logger *logger.Logger, services ServiceProvider) *MyHandler {
-    return &MyHandler{
-        BaseHandler: NewBaseHandler(logger.With("handler", "my_handler"), services),
-    }
-}
-
-func (h *MyHandler) GetCommand() string {
-    return "my_command"
-}
-
-func (h *MyHandler) Handle(ctx context.Context, data json.RawMessage) (*types.CommandResponse, error) {
-    // Implementation here
-    return &types.CommandResponse{
-        Success: true,
-        Data:    "result",
-    }, nil
-}
-```
-
-2. Register the handler in `internal/services/container.go`:
-
-```go
-func (c *ServiceContainer) registerHandlers() error {
-    // ... existing handlers ...
-    c.handlerRegistry.Register(handlers.NewMyHandler(c.logger, serviceProvider))
-    return nil
-}
-```
-
-### Adding New Services
-
-1. Define the interface in `internal/services/interfaces.go`
-2. Create the implementation in `internal/services/my_service.go`
-3. Add it to the service container in `internal/services/container.go`
-4. Update the service provider if handlers need access to it
-
-## WebSocket Protocol
-
-The agent uses a simple JSON-based protocol over WebSockets:
-
-### Authentication
-Upon receiving an `auth_challenge`, the agent responds with an mTLS proof that includes its certificate and a signature generated from the challenge nonce:
-```json
-{
-    "type": "auth_proof",
-    "data": {
-        "method": "mtls",
-        "certificate": "-----BEGIN CERTIFICATE-----...",
-        "signature": "base64-signature",
-        "nonce": "challenge-nonce",
-        "version": "v1.0.0"
-    }
-}
-```
-
-### Incoming Messages
-```json
-{
-    "event": "command",
-    "data": {
-        "command": "agent.hardware.info",
-        "data": {}
-    }
-}
-```
-
-### Outgoing Responses
-```json
-{
-    "event": "command_response",
-    "data": {
-        "success": true,
-        "data": { ... },
-        "error": ""
-    }
-}
-```
-
-## Logging
-
-The agent uses structured JSON logging:
-
-```json
-{
-    "time": "2024-01-01T12:00:00Z",
-    "level": "INFO",
-    "msg": "Starting Outlap Agent",
-    "component": "main"
-}
-```
-
-Log levels: DEBUG, INFO, WARN, ERROR
-
-## Deployment
-
-### Systemd Services
-The install script provisions two units: `outlap-agent.service` (runs as the unprivileged agent user) and `outlap-agent-updater.service` (a root oneshot triggered by a path unit). Templates are below for reference.
-
-`/etc/systemd/system/outlap-agent.service`
+Create `/etc/systemd/system/outlap-agent.service`:
 
 ```ini
 [Unit]
@@ -268,92 +88,118 @@ StandardError=append:/var/log/outlap/agent.log
 WantedBy=multi-user.target
 ```
 
-`/etc/systemd/system/outlap-agent-updater.service`
-
-```ini
-[Unit]
-Description=Outlap Agent Updater
-After=network-online.target
-Wants=network-online.target
-
-[Service]
-Type=oneshot
-User=root
-Group=root
-Environment="REQUEST_FILE=/run/outlap/update.request"
-Environment="TARGET_PATH=/usr/local/bin/outlap-agent"
-Environment="STAGING_DIR=/var/lib/outlap"
-ExecStart=/usr/local/bin/outlap-agent-updater
-ExecStartPost=/bin/systemctl restart outlap-agent.service
-PrivateTmp=true
-NoNewPrivileges=true
-ProtectSystem=strict
-ProtectHome=true
-StandardOutput=append:/var/log/outlap/updater.log
-StandardError=append:/var/log/outlap/updater.log
-
-[Install]
-WantedBy=multi-user.target
-```
-
-And the path unit that triggers the updater whenever `/run/outlap/update.request` changes:
-
-`/etc/systemd/system/outlap-agent-update.path`
-
-```ini
-[Unit]
-Description=Trigger Outlap agent updater when a request is received
-
-[Path]
-PathChanged=/run/outlap/update.request
-Unit=outlap-agent-updater.service
-
-[Install]
-WantedBy=multi-user.target
-```
-
-### Docker
-For development the provided `docker-compose.yml` runs the single-process agent inside a container, wiring in Docker and Nixpacks conveniences.
-
-## Testing
-
-The project includes comprehensive test coverage:
-
+Enable and start the service:
 ```bash
-# Run all tests
-./test.sh
-
-# Run tests with coverage
-./test.sh -c
-
-# Run tests with verbose output
-./test.sh -v
-
-# Run tests with race detector
-./test.sh -r
-
-# Run specific test packages
-./test.sh -p ./internal/handlers
-./test.sh -p ./internal/services
+sudo systemctl daemon-reload
+sudo systemctl enable outlap-agent
+sudo systemctl start outlap-agent
 ```
 
-## Contributing
+## Configuration
 
-We welcome contributions! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
+The agent is configured via environment variables in `/etc/outlap-agent/config`:
 
-### Development Setup
-1. Clone the repository
-2. Install Docker and Docker Compose
-3. Copy `.env.debug.example` to `.env` and configure
-4. Run `docker-compose up --build` to start development environment
-5. Run `./test.sh` to verify setup
+### Required Variables
+- `WEBSOCKET_URL`: WebSocket server URL (default: `wss://ws.outlap.dev/ws/agent`)
+- `JOIN_TOKEN`: One-time enrollment token obtained from the Outlap dashboard
 
-### Code Style
-- Follow standard Go conventions
-- Use structured logging with the provided logger
-- Add tests for new functionality  
-- Ensure all tests pass before submitting PRs
+### Optional Variables
+- `LOG_LEVEL`: Logging level - DEBUG, INFO, WARN, ERROR (default: `INFO`)
+- `RECONNECT_ENABLED`: Enable automatic reconnection (default: `true`)
+- `RECONNECT_INTERVAL`: Initial reconnection delay in seconds (default: `5`)
+- `RECONNECT_MAX_ATTEMPTS`: Maximum reconnection attempts, 0 for infinite (default: `0`)
+- `RECONNECT_BACKOFF_MAX`: Maximum backoff delay in seconds (default: `60`)
+- `OUTLAP_BACKUP_DIR`: Directory for database backups (default: `/var/lib/outlap/backups`)
+
+## Requirements
+
+- **Operating System**: Linux (amd64 or arm64)
+- **Docker**: Required for container management features
+- **Root Access**: Required for installation (the agent itself runs as an unprivileged user)
+- **Network**: Outbound HTTPS/WSS access to Outlap servers
+
+## Features
+
+The Outlap Agent provides:
+
+- **Application Deployment**: Deploy and manage containerized applications
+- **Database Management**: Provision, backup, and restore MySQL, PostgreSQL, MariaDB, Redis, and MongoDB
+- **System Monitoring**: Hardware information and system metrics
+- **Automatic Updates**: Self-updating capability with signature verification
+- **Secure Communication**: mTLS authentication with the Outlap platform
+
+## Automatic Updates
+
+The agent includes a built-in automatic update mechanism:
+
+1. The Outlap platform sends update requests when new versions are available
+2. The agent downloads and verifies the signed binary
+3. A separate updater service (running as root) performs the atomic swap
+4. The agent service automatically restarts with the new version
+
+All updates are cryptographically signed and verified before installation.
+
+## Troubleshooting
+
+### Check agent status
+```bash
+sudo systemctl status outlap-agent
+```
+
+### View logs
+```bash
+sudo journalctl -u outlap-agent -f
+# or
+sudo tail -f /var/log/outlap/agent.log
+```
+
+### Test connectivity
+```bash
+# Ensure the agent can reach the Outlap servers
+curl -I https://ws.outlap.dev
+```
+
+### Common Issues
+
+**Agent not connecting:**
+- Verify `WEBSOCKET_URL` is correct in `/etc/outlap-agent/config`
+- Check firewall settings for outbound HTTPS/WSS connections
+- Ensure JOIN_TOKEN is valid (tokens are one-time use during enrollment)
+
+**Permission errors:**
+- Verify the outlap user is in the docker group: `sudo usermod -aG docker outlap`
+- Check directory permissions: `/opt/outlap`, `/var/lib/outlap`, `/var/log/outlap`
+
+**Docker operations failing:**
+- Ensure Docker is installed and running: `sudo systemctl status docker`
+- Verify the outlap user has docker access: `sudo -u outlap docker ps`
+
+## Security
+
+The Outlap Agent follows security best practices:
+
+- Runs as an unprivileged user (outlap)
+- Uses systemd security features (NoNewPrivileges, ProtectSystem, etc.)
+- Employs mTLS for authentication
+- Verifies all update signatures before installation
+- Minimal attack surface with focused capabilities
+
+## Getting Your Join Token
+
+1. Log in to your Outlap dashboard at https://outlap.dev
+2. Navigate to Servers → Add Server
+3. Copy the join token provided
+4. Use it in your `/etc/outlap-agent/config` file
+
+The join token is used once during initial enrollment to obtain mTLS certificates. After successful enrollment, the agent uses certificate-based authentication.
+
+## Support
+
+For issues, questions, or feature requests:
+- Documentation: https://docs.outlap.dev
+- Email: support@outlap.dev
+- GitHub Issues: https://github.com/Outlap-dev/agent/issues
 
 ## License
 
-MIT License - see [LICENSE](LICENSE) for details.
+MIT License - see LICENSE for details.
